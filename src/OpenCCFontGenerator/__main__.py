@@ -21,6 +21,9 @@ def main():
     parser.add_argument(
         '--no-punc', action=argparse.BooleanOptionalAction, default=False,
         help='whether to skip conversion for punctuation and non-Han characters')
+    parser.add_argument(
+        '--force-vertical', action=argparse.BooleanOptionalAction, default=False,
+        help='whether to force vertical layout by swapping glyphs in cmap')
 
     args = parser.parse_args()
 
@@ -32,6 +35,7 @@ def main():
         ttc_index=args.ttc_index,
         twp=args.twp,
         no_punc=args.no_punc,
+        force_vertical=args.force_vertical,
     )
 
 

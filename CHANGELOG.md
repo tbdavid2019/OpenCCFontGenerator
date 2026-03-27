@@ -21,3 +21,9 @@ All notable changes to OpenCC Font Generator will be documented here.
 - 顯示設定摘要後再詢問確認，才開始生成。
 - 僅使用 Python 標準函式庫（`input()`），無額外相依套件。
 - **Files changed**: `start.py` (new)
+
+#### `--force-vertical` — 強制直排模式
+- 新增 `--force-vertical` CLI 參數。
+- 運作原理：自動從 `GSUB` 表搜尋 `vert` 與 `vrt2` 特性，並將其對應的直排字形強制寫入 `cmap` 映射中。
+- 改善 `remove_glyph()`：自動清理 `vmtx`、`VORG`、`hmtx` 與 `vhea` 表中對應的字形數據，確保直排字型結構完整。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`, `src/OpenCCFontGenerator/__main__.py`, `start.py`

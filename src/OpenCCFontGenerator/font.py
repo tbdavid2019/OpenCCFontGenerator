@@ -222,7 +222,15 @@ def remove_glyph(obj, glyph_name):
         pass
 
     # Remove glyph from glyf table
-    del obj['glyf'][glyph_name]
+    try:
+        del obj['glyf'][glyph_name]
+    except KeyError:
+        pass
+
+    # Cleanup metrics tables if present
+    for table in ['hmtx', 'vmtx', 'VORG']:
+        if table in obj and glyph_name in obj[table]:
+            del obj[table][glyph_name]
 
     # Remove glyph from GSUB table
     for lookup in obj['GSUB']['lookups'].values():
@@ -368,7 +376,54 @@ def modify_metadata(obj, name_header_file, font_version: float):
     obj['name'] = name_header
 
 
-def build_font(input_file, output_file, name_header_file, font_version, ttc_index=None, twp=False, no_punc=False):
+def apply_force_vertical(obj):
+    '''Change the cmap table to use the vertical variants of the glyphs.'''
+    if 'GSUB' not in obj or 'features' not in obj['GSUB'] or 'lookups' not in obj['GSUB']:
+        return
+
+    # 1. Identify "vert" and "vrt2" features
+    vert_lookups = []
+    for feature_tag, feature in obj['GSUB']['features'].items():
+        if feature_tag.strip() in ('vert', 'vrt2'):
+            vert_lookups.extend(feature['lookups'])
+
+    if not vert_lookups:
+        return
+
+    # 2. Collect horizontal -> vertical mappings from lookups
+    mapping = {}
+    for lookup_id in vert_lookups:
+        lookup = obj['GSUB']['lookups'].get(lookup_id)
+        if not lookup or lookup['type'] != 'gsub_single':
+            continue
+        for subtable in lookup['subtables']:
+            mapping.update(subtable)
+
+    if not mapping:
+        return
+
+    # 3. Update cmap and cmap_rev
+    for codepoint, glyph_name in list(obj['cmap'].items()):
+        if glyph_name in mapping:
+            vertical_glyph = mapping[glyph_name]
+            # Update cmap
+            obj['cmap'][codepoint] = vertical_glyph
+
+            # Update cmap_rev
+            # Remove codepoint from old glyph's list
+            if glyph_name in obj['cmap_rev'] and codepoint in obj['cmap_rev'][glyph_name]:
+                obj['cmap_rev'][glyph_name].remove(codepoint)
+                if not obj['cmap_rev'][glyph_name]:
+                    del obj['cmap_rev'][glyph_name]
+
+            # Add codepoint to new glyph's list
+            if vertical_glyph not in obj['cmap_rev']:
+                obj['cmap_rev'][vertical_glyph] = []
+            if codepoint not in obj['cmap_rev'][vertical_glyph]:
+                obj['cmap_rev'][vertical_glyph].append(codepoint)
+
+
+def build_font(input_file, output_file, name_header_file, font_version, ttc_index=None, twp=False, no_punc=False, force_vertical=False):
     font = load_font(input_file, ttc_index=ttc_index)
 
     # Determine the final Unicode range by the original font and OpenCC convert tables
@@ -383,6 +438,9 @@ def build_font(input_file, output_file, name_header_file, font_version, ttc_inde
         entries_char = [(k, v) for k, v in entries_char if k not in codepoints_non_han]
         entries_word = [(ks, vs) for ks, vs in entries_word
                         if not any(k in codepoints_non_han for k in ks)]
+
+    if force_vertical:
+        apply_force_vertical(font)
 
     codepoints_final = (build_codepoints_non_han() |
                         build_codepoints_han()) & codepoints_font

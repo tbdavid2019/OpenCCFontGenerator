@@ -136,6 +136,12 @@ def main():
     twp = prompt_yes_no("是否包含台灣慣用語轉換？", default=False)
     print()
 
+    # --- Step 8: Force Vertical ---
+    print("【步驟 8】強制直排模式 / Force Vertical Mode")
+    print("  說明: 將標點符號替換為直排形式，適合電子書字型。")
+    force_vertical = prompt_yes_no("是否開啟強制直排模式？", default=False)
+    print()
+
     # --- Summary ---
     print("-" * 50)
     print("  設定摘要 / Summary")
@@ -147,6 +153,7 @@ def main():
     print(f"  TTC 索引:    {ttc_index if ttc_index is not None else '無'}")
     print(f"  台灣慣用語:   {'是' if twp else '否'}")
     print(f"  排除標點:     {'是' if no_punc else '否'}")
+    print(f"  強制直排:     {'是' if force_vertical else '否'}")
     print("-" * 50)
     print()
 
@@ -168,6 +175,7 @@ def main():
             ttc_index=ttc_index,
             twp=twp,
             no_punc=no_punc,
+            force_vertical=force_vertical,
         )
     except Exception as e:
         print(f"❌ 生成失敗：{e}")
