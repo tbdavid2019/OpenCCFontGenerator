@@ -21,7 +21,7 @@ def main():
     parser.add_argument(
         '--twp', action=argparse.BooleanOptionalAction, default=False, help='whether to convert with Taiwanese phrases')
     parser.add_argument(
-        '--no-punc', action=argparse.BooleanOptionalAction, default=False,
+        '--no-punc', action='store_true', default=False,
         help='whether to skip conversion for punctuation and non-Han characters')
     parser.add_argument(
         '--force-vertical', action=argparse.BooleanOptionalAction, default=False,
