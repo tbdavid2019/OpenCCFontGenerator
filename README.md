@@ -42,7 +42,18 @@ python setup.py build  # 下載 OpenCC 資料並生成快取
 
 ## 使用方法 / Usage
 
-### 方法一：互動式精靈（推薦新手）/ Interactive Wizard (Recommended)
+### 方法一：全自動快速啟動（推薦：免環境設定 & 同步友善）
+如果您在 macOS 並希望自動管理環境（且不想在專案內產生 `.venv` 資料夾），請直接執行：
+
+```bash
+sh run.sh
+```
+此腳本會自動在 `~/.virtualenvs/` 建立一個中央虛擬環境並啟動精靈。
+
+---
+
+### 方法二：手動執行互動式精靈 / Interactive Wizard
+如果您已自行設定好環境，請執行：
 
 ```bash
 python start.py
