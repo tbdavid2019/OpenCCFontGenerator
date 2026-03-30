@@ -37,9 +37,40 @@ else
     source "$VENV_PATH/bin/activate"
 fi
 
-# 3. 啟動互動式精靈服務
+# 3. 檢查並自動安裝 otfcc (若系統未安裝)
+if ! command -v otfccdump &> /dev/null; then
+    echo "⚠️ 尚未安裝 otfcc (otfccdump/otfccbuild)，正在嘗試為您自動安裝..."
+    OS=$(uname -s)
+    ARCH=$(uname -m)
+    OTFCC_URL=""
+
+    if [ "$OS" = "Darwin" ]; then
+        if [ "$ARCH" = "arm64" ]; then
+            OTFCC_URL="https://github.com/caryll/otfcc/releases/download/v0.10.4/otfcc-macos.arm64-0.10.4.zip"
+        else
+            OTFCC_URL="https://github.com/caryll/otfcc/releases/download/v0.10.4/otfcc-macos.x64-0.10.4.zip"
+        fi
+    elif [ "$OS" = "Linux" ]; then
+        OTFCC_URL="https://github.com/caryll/otfcc/releases/download/v0.10.4/otfcc-linux.x64-0.10.4.zip"
+    fi
+
+    if [ -n "$OTFCC_URL" ]; then
+        curl -L -s -o /tmp/otfcc_download.zip "$OTFCC_URL"
+        mkdir -p /tmp/otfcc_bin
+        unzip -q -o /tmp/otfcc_download.zip -d /tmp/otfcc_bin
+        cp /tmp/otfcc_bin/otfccbuild /tmp/otfcc_bin/otfccdump "$VENV_PATH/bin/"
+        chmod +x "$VENV_PATH/bin/otfcc"*
+        rm -rf /tmp/otfcc_download.zip /tmp/otfcc_bin
+        echo "✅ otfcc 已成功安裝至專屬環境！"
+    else
+        echo "❌ 無法自動判定系統版本，請手動安裝 otfcc (https://github.com/caryll/otfcc)！"
+    fi
+    echo "--------------------------------------------------------"
+fi
+
+# 4. 啟動互動式精靈服務
 echo "💡 正在啟動 OpenCC 字型生成器..."
 python start.py
 
-# 4. 當結束後，自動退出虛擬環境 (保持當前 Terminal 乾淨)
+# 5. 當結束後，自動退出虛擬環境 (保持當前 Terminal 乾淨)
 deactivate
