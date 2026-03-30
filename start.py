@@ -37,13 +37,12 @@ def prompt_existing_file(message):
         print(f"  ❌ 找不到檔案：{value}，請確認路徑後再試。")
 
 
-def prompt_float(message, default=None):
-    """Prompt for a float. Returns default on empty input if provided."""
+def prompt_float_optional(message):
+    """Prompt for a float. Returns None on empty input."""
     while True:
-        hint = f" (預設: {default})" if default is not None else ""
-        raw = input(f"{message}{hint}: ").strip()
-        if raw == "" and default is not None:
-            return float(default)
+        raw = input(f"{message} (直接按 Enter 保留原設定): ").strip()
+        if raw == "":
+            return None
         try:
             return float(raw)
         except ValueError:
@@ -113,8 +112,11 @@ def main():
 
     # --- Step 3: Output path ---
     print("【步驟 3】輸出字型路徑 / Output Font Path")
-    output_file = prompt_required("請輸入輸出字型路徑（例如: output.ttf）")
-    print()
+    base, ext = os.path.splitext(input_file)
+    default_output = f"{base}_TC{ext}"
+    raw_output = input(f"請輸入輸出路徑 [預設: {default_output}]: ").strip()
+    output_file = raw_output if raw_output else default_output
+    print(f"  ✓ 輸出路徑已設定為：{output_file}\n")
 
     # --- Step 4: Font Name (Replaces Name Header JSON) ---
     print("【步驟 4】設定新字型名稱 / New Font Name")
@@ -138,13 +140,18 @@ def main():
 
     # --- Step 5: Font version ---
     print("【步驟 5】字型版本號碼 / Font Version")
-    font_version = prompt_float("請輸入版本號碼", default=1.0)
-    print()
+    font_version = prompt_float_optional("請輸入新版本號碼")
+    if font_version is None:
+        print("  ✓ 將保留原始字型的版本號設定。\n")
+    else:
+        print(f"  ✓ 版本號碼將更新為：{font_version}\n")
 
     # --- Step 6: TTC index (optional) ---
-    print("【步驟 6】TTC 索引（選用）/ TTC Index (optional)")
-    ttc_index = prompt_int_optional("若來源為 .ttc 檔案，請輸入字型索引")
-    print()
+    ttc_index = None
+    if str(input_file).lower().endswith('.ttc'):
+        print("【步驟 6】TTC 索引（選用）/ TTC Index (optional)")
+        ttc_index = prompt_int_optional("此為 .ttc 檔案，請輸入轉換目標的字型索引 (自 0 開始)")
+        print()
 
     # --- Step 7: Taiwanese phrases ---
     print("【步驟 7】台灣慣用語轉換 / Taiwanese Phrases")
@@ -167,8 +174,9 @@ def main():
         print(f"  名稱標頭:     {name_header_file} (JSON模式)")
     else:
         print(f"  新字型名稱:   {font_name if font_name else '自動產生 (原名 + TC)'}")
-    print(f"  版本號碼:     {font_version}")
-    print(f"  TTC 索引:    {ttc_index if ttc_index is not None else '無'}")
+    print(f"  版本號碼:     {font_version if font_version is not None else '保留原字型設定'}")
+    if str(input_file).lower().endswith('.ttc'):
+        print(f"  TTC 索引:    {ttc_index if ttc_index is not None else '無'}")
     print(f"  台灣慣用語:   {'是' if twp else '否'}")
     print(f"  排除標點:     {'是' if no_punc else '否'}")
     print(f"  強制直排:     {'是' if force_vertical else '否'}")

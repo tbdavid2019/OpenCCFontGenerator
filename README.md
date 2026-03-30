@@ -64,8 +64,8 @@ python start.py
 2. 來源字型路徑
 3. 輸出字型路徑
 4. 新字型名稱（可留空自動生成，或輸入舊版 JSON 檔案）
-5. 版本號碼
-6. TTC 索引（選用）
+5. 字型版本號碼（選填，留空則保留原始）
+6. TTC 索引（僅針對 .ttc 檔案詢問）
 7. 是否包含台灣慣用語轉換
 
 ---
@@ -78,7 +78,7 @@ python -m OpenCCFontGenerator \
   -o <輸出字型> \
   [--font-name <新字型名稱>] \
   [-n <名稱標頭 JSON>] \
-  --font-version <版本號碼> \
+  [--font-version <版本號碼>] \
   [--ttc-index <索引>] \
   [--twp] \
   [--no-punc]
@@ -92,7 +92,7 @@ python -m OpenCCFontGenerator \
 | `-o`, `--output-file` | 輸出字型路徑 | ✅ |
 | `--font-name` | 新字型的名稱（建議提供） | ❌ |
 | `-n`, `--name-header-file` | 進階：名稱標頭 JSON 設定檔路徑 | ❌ |
-| `--font-version` | 字型版本號碼（例如: `1.0`） | ✅ |
+| `--font-version` | 覆寫字型版本號碼（預設保留原始版本） | ❌ |
 | `--ttc-index` | TTC 檔案的字型索引（選用） | ❌ |
 | `--twp` | 啟用台灣慣用語轉換（例如「軟件」→「軟體」） | ❌ |
 | `--no-punc` | 排除標點符號的轉換，僅轉換漢字 | ❌ |

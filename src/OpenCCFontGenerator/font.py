@@ -364,14 +364,15 @@ def build_name_header(name_header_file, style, version, date):
     return name_header
 
 
-def modify_metadata(obj, name_header_file, font_version: float, font_name=None):
+def modify_metadata(obj, name_header_file=None, font_version=None, font_name=None):
     if name_header_file and str(name_header_file).endswith('.json'):
         style = next(item['nameString']
                      for item in obj['name'] if item['nameID'] == 17)
         today = date.today().strftime('%b %d, %Y')
 
-        name_header = build_name_header(
-            name_header_file, style, str(font_version), today)
+        if name_header_file and str(name_header_file).endswith('.json') and font_version is not None:
+            name_header = build_name_header(
+                name_header_file, style, str(font_version), today)
 
         obj['name'] = name_header
     else:
@@ -389,7 +390,8 @@ def modify_metadata(obj, name_header_file, font_version: float, font_name=None):
                     item['nameString'] = item['nameString'].replace(original_family_ps, font_name_ps)
                     item['nameString'] = item['nameString'].replace(original_family, font_name).replace(" ", "-")
 
-    obj['head']['fontRevision'] = font_version
+    if font_version is not None:
+        obj['head']['fontRevision'] = font_version
 
 
 def apply_force_vertical(obj):
@@ -439,7 +441,7 @@ def apply_force_vertical(obj):
                 obj['cmap_rev'][vertical_glyph].append(codepoint)
 
 
-def build_font(input_file, output_file, name_header_file, font_version, ttc_index=None, twp=False, no_punc=False, force_vertical=False, font_name=None):
+def build_font(input_file, output_file, name_header_file=None, font_version=None, ttc_index=None, twp=False, no_punc=False, force_vertical=False, font_name=None):
     font = load_font(input_file, ttc_index=ttc_index)
 
     # Determine the final Unicode range by the original font and OpenCC convert tables

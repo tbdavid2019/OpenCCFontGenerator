@@ -16,8 +16,8 @@ def main():
                         required=False, help='the new font family name (used if -n is not provided)')
     parser.add_argument('--ttc-index', type=int,
                         help='the font index in a TrueType Collection (TTC) file')
-    parser.add_argument('--font-version', type=float,
-                        help='the version of the generated font file')
+    parser.add_argument('--font-version', type=float, required=False,
+                        help='the version of the generated font file (optional, defaults to keeping original)')
     parser.add_argument(
         '--twp', action=argparse.BooleanOptionalAction, default=False, help='whether to convert with Taiwanese phrases')
     parser.add_argument(
