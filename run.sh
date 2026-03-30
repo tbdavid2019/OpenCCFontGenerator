@@ -68,9 +68,19 @@ if ! command -v otfccdump &> /dev/null; then
     echo "--------------------------------------------------------"
 fi
 
-# 4. 啟動互動式精靈服務
+# 4. 檢查並建立 OpenCC 轉換快取 (若無快取或首次執行)
+CACHE_FILE="src/OpenCCFontGenerator/cache/convert_table_chars_twp.txt"
+if [ ! -f "$CACHE_FILE" ]; then
+    echo "⚙️ 正在建置 OpenCC 轉換快取字典 (初次執行需 10~20 秒)..."
+    # Ensure setuptools is installed for setup.py
+    pip install setuptools > /dev/null 2>&1
+    python setup.py build
+    echo "--------------------------------------------------------"
+fi
+
+# 5. 啟動互動式精靈服務
 echo "💡 正在啟動 OpenCC 字型生成器..."
 python start.py
 
-# 5. 當結束後，自動退出虛擬環境 (保持當前 Terminal 乾淨)
+# 6. 當結束後，自動退出虛擬環境 (保持當前 Terminal 乾淨)
 deactivate
