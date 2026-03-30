@@ -116,10 +116,25 @@ def main():
     output_file = prompt_required("請輸入輸出字型路徑（例如: output.ttf）")
     print()
 
-    # --- Step 4: Name header ---
-    print("【步驟 4】名稱標頭設定檔 / Name Header JSON File")
-    name_header_file = prompt_existing_file("請輸入名稱標頭 JSON 檔案路徑")
+    # --- Step 4: Font Name (Replaces Name Header JSON) ---
+    print("【步驟 4】設定新字型名稱 / New Font Name")
+    print("  說明: 留空則系統會自動讀取原字型名稱並標註 'TC'。")
+    print("        （若需進階設定，也可直接輸入 .json 檔案路徑）")
+    raw_name_input = input("請輸入新名稱 (直接按 Enter 留空): ").strip()
     print()
+
+    font_name = None
+    name_header_file = None
+
+    if raw_name_input.endswith(".json"):
+        if os.path.isfile(raw_name_input):
+            name_header_file = raw_name_input
+            print(f"  ✓ 將使用 JSON 設定檔: {name_header_file}\n")
+        else:
+            print(f"  ❌ 找不到檔案：{raw_name_input}，請確認後再試。")
+            sys.exit(1)
+    elif raw_name_input:
+        font_name = raw_name_input
 
     # --- Step 5: Font version ---
     print("【步驟 5】字型版本號碼 / Font Version")
@@ -148,7 +163,10 @@ def main():
     print("-" * 50)
     print(f"  來源字型:     {input_file}")
     print(f"  輸出路徑:     {output_file}")
-    print(f"  名稱標頭:     {name_header_file}")
+    if name_header_file:
+        print(f"  名稱標頭:     {name_header_file} (JSON模式)")
+    else:
+        print(f"  新字型名稱:   {font_name if font_name else '自動產生 (原名 + TC)'}")
     print(f"  版本號碼:     {font_version}")
     print(f"  TTC 索引:    {ttc_index if ttc_index is not None else '無'}")
     print(f"  台灣慣用語:   {'是' if twp else '否'}")
@@ -176,6 +194,7 @@ def main():
             twp=twp,
             no_punc=no_punc,
             force_vertical=force_vertical,
+            font_name=font_name,
         )
     except Exception as e:
         print(f"❌ 生成失敗：{e}")

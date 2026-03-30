@@ -364,16 +364,32 @@ def build_name_header(name_header_file, style, version, date):
     return name_header
 
 
-def modify_metadata(obj, name_header_file, font_version: float):
-    style = next(item['nameString']
-                 for item in obj['name'] if item['nameID'] == 17)
-    today = date.today().strftime('%b %d, %Y')
+def modify_metadata(obj, name_header_file, font_version: float, font_name=None):
+    if name_header_file and str(name_header_file).endswith('.json'):
+        style = next(item['nameString']
+                     for item in obj['name'] if item['nameID'] == 17)
+        today = date.today().strftime('%b %d, %Y')
 
-    name_header = build_name_header(
-        name_header_file, style, str(font_version), today)
+        name_header = build_name_header(
+            name_header_file, style, str(font_version), today)
+
+        obj['name'] = name_header
+    else:
+        original_family = next((item['nameString'] for item in obj['name'] if item['nameID'] == 1), None)
+        if not font_name:
+            font_name = f"{original_family} TC" if original_family else "OpenCC TC"
+
+        if original_family:
+            original_family_ps = original_family.replace(" ", "")
+            font_name_ps = font_name.replace(" ", "")
+            for item in obj['name']:
+                if item['nameID'] in (1, 3, 4, 16):
+                    item['nameString'] = item['nameString'].replace(original_family, font_name)
+                elif item['nameID'] == 6:
+                    item['nameString'] = item['nameString'].replace(original_family_ps, font_name_ps)
+                    item['nameString'] = item['nameString'].replace(original_family, font_name).replace(" ", "-")
 
     obj['head']['fontRevision'] = font_version
-    obj['name'] = name_header
 
 
 def apply_force_vertical(obj):
@@ -423,7 +439,7 @@ def apply_force_vertical(obj):
                 obj['cmap_rev'][vertical_glyph].append(codepoint)
 
 
-def build_font(input_file, output_file, name_header_file, font_version, ttc_index=None, twp=False, no_punc=False, force_vertical=False):
+def build_font(input_file, output_file, name_header_file, font_version, ttc_index=None, twp=False, no_punc=False, force_vertical=False, font_name=None):
     font = load_font(input_file, ttc_index=ttc_index)
 
     # Determine the final Unicode range by the original font and OpenCC convert tables
@@ -478,5 +494,5 @@ def build_font(input_file, output_file, name_header_file, font_version, ttc_inde
     create_char2char_table(font, feature_name, char2char_table)
     create_pseu2word_table(font, feature_name, pseu2word_table)
 
-    modify_metadata(font, name_header_file, font_version)
+    modify_metadata(font, name_header_file, font_version, font_name=font_name)
     save_font(font, output_file)

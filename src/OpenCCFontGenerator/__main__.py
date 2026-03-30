@@ -11,7 +11,9 @@ def main():
     parser.add_argument('-o', '--output-file', type=str,
                         required=True, help='path to the generated font file')
     parser.add_argument('-n', '--name-header-file',
-                        type=str, required=True, help='path to the name header configuration file (in JSON format)')
+                        type=str, required=False, help='path to the name header configuration file (in JSON format, optional)')
+    parser.add_argument('--font-name', type=str,
+                        required=False, help='the new font family name (used if -n is not provided)')
     parser.add_argument('--ttc-index', type=int,
                         help='the font index in a TrueType Collection (TTC) file')
     parser.add_argument('--font-version', type=float,
@@ -36,6 +38,7 @@ def main():
         twp=args.twp,
         no_punc=args.no_punc,
         force_vertical=args.force_vertical,
+        font_name=args.font_name,
     )
 
 
