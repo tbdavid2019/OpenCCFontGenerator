@@ -1,7 +1,8 @@
 # OpenCC 字型生成器 / OpenCC Font Generator
-![alt text](image.png)
-
-![alt text](image-1.png)
+<p align="center">
+  <img width="48%" src="image.png" alt="OpenCC Font Preview">
+  <img width="48%" src="image-1.png" alt="OpenCC Font Preview 2">
+</p>
 
 ---
 
