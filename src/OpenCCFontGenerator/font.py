@@ -376,19 +376,25 @@ def modify_metadata(obj, name_header_file=None, font_version=None, font_name=Non
 
         obj['name'] = name_header
     else:
-        original_family = next((item['nameString'] for item in obj['name'] if item['nameID'] == 1), None)
+        original_families = list(set(item['nameString'] for item in obj['name'] if item['nameID'] in (1, 16)))
+        original_families.sort(key=len, reverse=True)
+        
         if not font_name:
-            font_name = f"{original_family} TC" if original_family else "OpenCC TC"
+            font_name = f"{original_families[0]} TC" if original_families else "OpenCC TC"
 
-        if original_family:
-            original_family_ps = original_family.replace(" ", "")
-            font_name_ps = font_name.replace(" ", "")
-            for item in obj['name']:
+        for item in obj['name']:
+            for orig_fam in original_families:
+                orig_fam_ps = orig_fam.replace(" ", "")
+                font_name_ps = font_name.replace(" ", "")
+                
                 if item['nameID'] in (1, 3, 4, 16):
-                    item['nameString'] = item['nameString'].replace(original_family, font_name)
+                    if orig_fam in item['nameString']:
+                        item['nameString'] = item['nameString'].replace(orig_fam, font_name)
                 elif item['nameID'] == 6:
-                    item['nameString'] = item['nameString'].replace(original_family_ps, font_name_ps)
-                    item['nameString'] = item['nameString'].replace(original_family, font_name).replace(" ", "-")
+                    if orig_fam_ps in item['nameString']:
+                        item['nameString'] = item['nameString'].replace(orig_fam_ps, font_name_ps)
+                    elif orig_fam in item['nameString']:
+                        item['nameString'] = item['nameString'].replace(orig_fam, font_name).replace(" ", "-")
 
     if font_version is not None:
         obj['head']['fontRevision'] = font_version
