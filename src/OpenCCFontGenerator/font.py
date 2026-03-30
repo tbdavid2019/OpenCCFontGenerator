@@ -387,14 +387,20 @@ def modify_metadata(obj, name_header_file=None, font_version=None, font_name=Non
                 orig_fam_ps = orig_fam.replace(" ", "")
                 font_name_ps = font_name.replace(" ", "")
                 
+                # Ensure safe ASCII for PostScript Name
+                import re
+                safe_font_name_ps = re.sub(r'[^A-Za-z0-9-]', '', font_name_ps)
+                if not safe_font_name_ps:
+                    safe_font_name_ps = "TC"
+                
                 if item['nameID'] in (1, 3, 4, 16):
                     if orig_fam in item['nameString']:
                         item['nameString'] = item['nameString'].replace(orig_fam, font_name)
                 elif item['nameID'] == 6:
                     if orig_fam_ps in item['nameString']:
-                        item['nameString'] = item['nameString'].replace(orig_fam_ps, font_name_ps)
+                        item['nameString'] = item['nameString'].replace(orig_fam_ps, safe_font_name_ps)
                     elif orig_fam in item['nameString']:
-                        item['nameString'] = item['nameString'].replace(orig_fam, font_name).replace(" ", "-")
+                        item['nameString'] = item['nameString'].replace(orig_fam, safe_font_name_ps).replace(" ", "-")
 
     if font_version is not None:
         obj['head']['fontRevision'] = font_version
