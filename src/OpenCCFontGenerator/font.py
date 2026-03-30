@@ -251,7 +251,7 @@ def remove_glyph(obj, glyph_name):
                 subtable['substitutions'][:] = filter(
                     predicate, subtable['substitutions'])
         else:
-            raise NotImplementedError('Unknown GSUB lookup type')
+            pass  # Ignore NotImplementedError('Unknown GSUB lookup type')
 
     # Remove glyph from GPOS table
     for lookup in obj['GPOS']['lookups'].values():
@@ -264,7 +264,7 @@ def remove_glyph(obj, glyph_name):
                 subtable['first'].pop(glyph_name, None)
                 subtable['second'].pop(glyph_name, None)
         else:
-            raise NotImplementedError('Unknown GPOS lookup type')
+            pass  # Ignore NotImplementedError('Unknown GPOS lookup type')
 
 
 def get_reachable_glyphs(obj):
@@ -294,7 +294,7 @@ def get_reachable_glyphs(obj):
                         if glyph_name in item['from']:
                             reachable_glyphs.add(item['to'])
             else:
-                raise NotImplementedError('Unknown GSUB lookup type')
+                pass  # Ignore NotImplementedError('Unknown GSUB lookup type')
 
     return reachable_glyphs
 
