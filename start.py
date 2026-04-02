@@ -28,10 +28,13 @@ def prompt_required(message, error="此欄位不可為空，請重新輸入。")
         print(f"  ❌ {error}")
 
 
-def prompt_existing_file(message):
+def prompt_existing_file(message, optional=False):
     """Prompt until the user enters a path to an existing file."""
     while True:
-        value = prompt_required(message)
+        msg = f"{message} (直接按 Enter 跳過)" if optional else message
+        value = input(f"{msg}: ").strip()
+        if optional and not value:
+            return None
         if os.path.isfile(value):
             return value
         print(f"  ❌ 找不到檔案：{value}，請確認路徑後再試。")
@@ -107,7 +110,7 @@ def main():
 
     # --- Step 2: Source font ---
     print("【步驟 2】來源字型路徑 / Source Font Path")
-    input_file = prompt_existing_file("請輸入來源字型路徑（.ttf / .otf / .ttc）")
+    input_file = prompt_existing_file("請輸入來源字型路徑（.ttf / .otf / .ttc / .woff2）")
     print()
 
     # --- Step 3: Output path ---
@@ -120,7 +123,7 @@ def main():
 
     # --- Step 4: Font Name (Replaces Name Header JSON) ---
     print("【步驟 4】設定新字型名稱 / New Font Name")
-    print("  說明: 留空則系統會自動讀取原字型名稱並標註 'TC'。")
+    print("  說明: 留空則系統會自動讀取原字型名稱並標註 'TC'（或依據轉換模式標註）。")
     print("        （若需進階設定，也可直接輸入 .json 檔案路徑）")
     raw_name_input = input("請輸入新名稱 (直接按 Enter 留空): ").strip()
     print()
@@ -153,15 +156,38 @@ def main():
         ttc_index = prompt_int_optional("此為 .ttc 檔案，請輸入轉換目標的字型索引 (自 0 開始)")
         print()
 
-    # --- Step 7: Taiwanese phrases ---
-    print("【步驟 7】台灣慣用語轉換 / Taiwanese Phrases")
-    twp = prompt_yes_no("是否包含台灣慣用語轉換？", default=False)
+    # --- Step 7: OpenCC Configuration ---
+    print("【步驟 7】OpenCC 轉換標準 / OpenCC Configuration")
+    print("  1. s2t  - 簡體轉繁體（預設）")
+    print("  2. twp  - 簡體轉繁體（包含台灣慣用語轉換，例如：软件 -> 軟體）")
+    print("  3. s2tw - 簡體轉台灣正體")
+    print("  4. s2hk - 簡體轉香港繁體")
+    print("  5. t2s  - 繁體轉簡體")
     print()
+    config_map = {"1": "s2t", "2": "twp", "3": "s2tw", "4": "s2hk", "5": "t2s"}
+    config_choice = input("請輸入選項 (1/2/3/4/5) [預設: 1]: ").strip()
+    config = config_map.get(config_choice, "s2t")
+    print(f"  ✓ 已選擇：{config}\n")
 
-    # --- Step 8: Force Vertical ---
-    print("【步驟 8】強制直排模式 / Force Vertical Mode")
+    # --- Step 8: Fallback Font ---
+    print("【步驟 8】缺字補全（備用字型）/ Fallback Font")
+    print("  說明: 如果目標字元在來源字型中不存在，可以從另一個字型（備用字型）中提取並補入。")
+    fallback_font = prompt_existing_file("請輸入備用字型路徑", optional=True)
+    if fallback_font:
+        print(f"  ✓ 已設定備用字型：{fallback_font}\n")
+    else:
+        print("  ✓ 未設定備用字型。\n")
+
+    # --- Step 9: Force Vertical ---
+    print("【步驟 9】強制直排模式 / Force Vertical Mode")
     print("  說明: 將標點符號替換為直排形式，適合電子書字型。")
     force_vertical = prompt_yes_no("是否開啟強制直排模式？", default=False)
+    print()
+
+    # --- Step 10: Output WOFF2 ---
+    print("【步驟 10】額外輸出格式 / Additional Formats")
+    print("  說明: 除了預設的 TTF 之外，是否同時生成壓縮率較高的 WOFF2 格式？")
+    output_woff2 = prompt_yes_no("是否同時輸出 WOFF2 格式？", default=False)
     print()
 
     # --- Summary ---
@@ -173,13 +199,15 @@ def main():
     if name_header_file:
         print(f"  名稱標頭:     {name_header_file} (JSON模式)")
     else:
-        print(f"  新字型名稱:   {font_name if font_name else '自動產生 (原名 + TC)'}")
+        print(f"  新字型名稱:   {font_name if font_name else '自動產生'}")
     print(f"  版本號碼:     {font_version if font_version is not None else '保留原字型設定'}")
     if str(input_file).lower().endswith('.ttc'):
         print(f"  TTC 索引:    {ttc_index if ttc_index is not None else '無'}")
-    print(f"  台灣慣用語:   {'是' if twp else '否'}")
+    print(f"  轉換標準:     {config}")
+    print(f"  備用字型:     {fallback_font if fallback_font else '無'}")
     print(f"  排除標點:     {'是' if no_punc else '否'}")
     print(f"  強制直排:     {'是' if force_vertical else '否'}")
+    print(f"  輸出 WOFF2:   {'是' if output_woff2 else '否'}")
     print("-" * 50)
     print()
 
@@ -199,10 +227,12 @@ def main():
             name_header_file=name_header_file,
             font_version=font_version,
             ttc_index=ttc_index,
-            twp=twp,
+            config=config,
+            fallback_font=fallback_font,
             no_punc=no_punc,
             force_vertical=force_vertical,
             font_name=font_name,
+            output_woff2=output_woff2,
         )
     except Exception as e:
         print(f"❌ 生成失敗：{e}")

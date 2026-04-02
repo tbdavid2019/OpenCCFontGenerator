@@ -35,6 +35,12 @@ if [ ! -d "$VENV_PATH" ]; then
 else
     # 環境已存在，直接啟動
     source "$VENV_PATH/bin/activate"
+    
+    # [新加入] 確保重要依賴項存在（例如剛新增的 fonttools）
+    if ! python3 -c "import fontTools, brotli" &> /dev/null; then
+        echo "📦 偵測到缺少必要套件 (fonttools/brotli)，正在自動安裝..."
+        pip install fonttools brotli
+    fi
 fi
 
 # 3. 檢查並自動安裝 otfcc (若系統未安裝)
