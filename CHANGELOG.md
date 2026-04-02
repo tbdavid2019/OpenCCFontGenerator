@@ -8,6 +8,11 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ### Added
 
+#### Webfont Generator — 獨立網頁字型工具
+- 新增 `runWEBFONT.sh` 與 `startWEBFONT.py` 互動精靈，支援將 TTF/OTF 獨立轉換為 WOFF2。
+- **自動化 CSS**: 轉換完成後自動產出 `fonts.css` 範例，內含 `@font-face` 設定。
+- **Files changed**: `runWEBFONT.sh`, `startWEBFONT.py`, `src/OpenCCFontGenerator/webfont.py`
+
 #### Pseudo-Vertical Rotation (90° Rotation) — 偽直排旋轉支援
 - 新增 `run90.sh` 與 `start90.py` 互動精靈，支援將字元順時針旋轉 90 度以解決舊型設備不支援直排的問題。
 - **幾何中心旋轉**: 透過 `run90.py` 對 `glyf` 座標進行精確變換。
