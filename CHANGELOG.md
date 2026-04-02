@@ -8,6 +8,13 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ### Added
 
+#### Pseudo-Vertical Rotation (90° Rotation) — 偽直排旋轉支援
+- 新增 `run90.sh` 與 `start90.py` 互動精靈，支援將字元順時針旋轉 90 度以解決舊型設備不支援直排的問題。
+- **幾何中心旋轉**: 透過 `run90.py` 對 `glyf` 座標進行精確變換。
+- **智慧識別**: 提供「僅旋轉漢字」選項，避免英數混排時英文字母跟著躺平。
+- **度量衡調整**: 自動修正 `advanceWidth` 與全域度量，確保排版一致。
+- **Files changed**: `run90.sh`, `start90.py`, `src/OpenCCFontGenerator/run90.py`
+
 #### WOFF2 Input & Output Support — 網頁字型支援
 - 新增對 `.woff2` 作為來源字型的支援。系統會自動解壓 WOFF2 並轉為臨時 TTF 供 `otfcc` 處理。
 - 新增 `--woff2` 選項與互動精靈對話（Step 10），支援在輸出 TTF 時同時生成壓縮後的 `.woff2` 格式。
