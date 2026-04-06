@@ -209,6 +209,8 @@ def main():
     print(f"  強制直排:     {'是' if force_vertical else '否'}")
     print(f"  輸出 WOFF2:   {'是' if output_woff2 else '否'}")
     print("-" * 50)
+    print("  注意: 輸出的 _TC 字型是為 OpenCC 詞彙級轉換優化的 subset font。")
+    print("        為了在 OpenType glyph 上限內容納 GSUB 規則，程式可能不會完整保留原始字庫。")
     print()
 
     confirm = prompt_yes_no("確認以上設定並開始生成？", default=True)

@@ -6,6 +6,13 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ## [Unreleased]
 
+### Changed
+
+#### Documentation for subset-font behavior
+- 補充 README 與互動式精靈說明，明確標示 `_TC` 輸出為針對 OpenCC 詞彙級轉換優化的 subset font，而非完整保留原始字庫的副本。
+- 補充 OpenType `65535` glyph 上限與 pseudo glyph 取捨背景，避免使用者誤判輸出檔體積與字庫覆蓋範圍。
+- **Files changed**: `README.md`, `start.py`
+
 ### Fixed
 
 #### Glyph cleanup compatibility for fallback merge
