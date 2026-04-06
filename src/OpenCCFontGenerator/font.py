@@ -45,6 +45,16 @@ def build_cmap_rev(obj):
         cmap_rev[glyph_name].append(codepoint)
     return cmap_rev
 
+def get_lookup_values(obj, table_name):
+    '''Return lookup dictionaries for an OpenType table when present.'''
+    table = obj.get(table_name)
+    if not isinstance(table, dict):
+        return ()
+    lookups = table.get('lookups')
+    if not isinstance(lookups, dict):
+        return ()
+    return lookups.values()
+
 def load_font(path, ttc_index=None):
     '''Load a font as a JSON object.'''
     temp_ttf = None
@@ -256,7 +266,7 @@ def remove_glyph(obj, glyph_name):
     for table in ['hmtx', 'vmtx', 'VORG']:
         if table in obj and glyph_name in obj[table]:
             del obj[table][glyph_name]
-    for lookup in obj['GSUB']['lookups'].values():
+    for lookup in get_lookup_values(obj, 'GSUB'):
         if lookup['type'] == 'gsub_single':
             for subtable in lookup['subtables']:
                 for k, v in list(subtable.items()):
@@ -271,7 +281,7 @@ def remove_glyph(obj, glyph_name):
             for subtable in lookup['subtables']:
                 def predicate(item): return glyph_name not in item['from'] and glyph_name != item['to']
                 subtable['substitutions'][:] = filter(predicate, subtable['substitutions'])
-    for lookup in obj['GPOS']['lookups'].values():
+    for lookup in get_lookup_values(obj, 'GPOS'):
         if lookup['type'] == 'gpos_single':
             for subtable in lookup['subtables']:
                 subtable.pop(glyph_name, None)
@@ -284,7 +294,7 @@ def get_reachable_glyphs(obj):
     reachable_glyphs = {'.notdef', '.null'}
     for glyph_name in obj['cmap'].values():
         reachable_glyphs.add(glyph_name)
-        for lookup in obj['GSUB']['lookups'].values():
+        for lookup in get_lookup_values(obj, 'GSUB'):
             if lookup['type'] == 'gsub_single':
                 for subtable in lookup['subtables']:
                     for k, v in subtable.items():

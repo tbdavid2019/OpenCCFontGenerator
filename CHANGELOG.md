@@ -6,6 +6,13 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+#### Glyph cleanup compatibility for fallback merge
+- 修正部分來源字型缺少 `GSUB` 或 `GPOS` 表時，啟用 `--fallback-font` 後在清理未使用字形階段觸發 `KeyError('GSUB')` 而失敗的問題。
+- `remove_glyph()` 與 `clean_unused_glyphs()` 現在會在 OpenType 版面表不存在時安全略過相關 lookup 清理。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`
+
 ### Added
 
 #### Webfont Generator — 獨立網頁字型工具
