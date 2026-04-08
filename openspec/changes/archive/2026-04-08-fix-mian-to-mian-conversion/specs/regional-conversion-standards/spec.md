@@ -1,6 +1,10 @@
 ## Purpose
-Define the regional conversion standards supported by the font generator.
+Fix incorrect character mapping for "面" in the Taiwan Phrases (twp) configuration.
+
 ## Requirements
+
+## ADDED Requirements
+
 ### Requirement: Support Taiwan Traditional with Phrases (twp)
 The system SHALL support generating a font that converts Simplified Chinese characters to Taiwan Traditional standard characters including common phrases via the `twp` mapping.
 
@@ -15,19 +19,3 @@ The system SHALL use conservative mappings for ambiguous characters in the `twp`
 - **WHEN** generating a font with the `twp` configuration
 - **THEN** the character "面" maps to "面" in the single-character translation table
 - **AND** phrase-level mapping (e.g., "麵條") still correctly uses the "麵" character
-
-## ADDED Requirements
-
-### Requirement: Support Hong Kong Traditional standard
-The system SHALL support generating a font that converts Simplified Chinese characters to Hong Kong Traditional standard characters via OpenCC's `s2hk` mapping.
-
-#### Scenario: User requests Hong Kong Traditional output
-- **WHEN** user selects `s2hk` configuration in CLI or wizard
-- **THEN** system maps input characters using the `s2hk` OpenCC sequence
-
-### Requirement: Support Taiwan Traditional standard
-The system SHALL support generating a font that converts Simplified Chinese characters to Taiwan Traditional standard characters via OpenCC's `s2tw` mapping.
-
-#### Scenario: User requests Taiwan Traditional output
-- **WHEN** user selects `s2tw` configuration in CLI or wizard
-- **THEN** system maps input characters using the `s2tw` OpenCC sequence
