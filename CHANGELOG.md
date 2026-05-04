@@ -6,6 +6,30 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ## [Unreleased]
 
+### Added
+
+#### Variable CJK Family Builder — variable 拉丁字型多權重合成流程
+- 新增 `runVF.sh` 與 `startVF.py` 互動精靈，支援將 variable 拉丁字型展開成多個 static 權重 instance，並與對應的 CJK fallback 字型逐一合成。
+- 新增 `src/OpenCCFontGenerator/vf_family.py`，內含 variable font `wght` 軸展開、fallback 權重配對與批次輸出整套 family 的核心流程。
+- 適用場景：像 `MonoLisaVariable*.ttf` 這類只有英數的 variable 字型，可搭配 `NotoSansTC-*.ttf` 建立一整套可安裝的 CJK family。
+- **Files changed**: `runVF.sh`, `startVF.py`, `src/OpenCCFontGenerator/vf_family.py`, `README.md`
+
+#### Static Font Family Builder — 非 variable 靜態字型批次流程
+- 新增 `runSTATIC.sh` 與 `startSTATIC.py` 互動精靈，支援將單一靜態字型或整個靜態字重 family 批次處理。
+- 新增 `src/OpenCCFontGenerator/static_family.py`，可依檔名自動辨識 `Regular / Medium / Bold` 等字重，並自動配對對應的 fallback 字型。
+- 適用場景：來源字型不是 variable font，但仍想把一整組 `Regular/Bold/Light...` 靜態字型一次轉成 `_TC` family。
+- **Files changed**: `runSTATIC.sh`, `startSTATIC.py`, `src/OpenCCFontGenerator/static_family.py`, `README.md`
+
+#### `--merge-mode universal` — 通用型 merge font 模式
+- 新增 `--merge-mode {opencc,universal}` CLI 參數，讓 fallback 字型不再只補 OpenCC 轉換目標字，而是可選擇保留來源字庫並合併 fallback 中所有缺少的 codepoint。
+- 更新互動式精靈 `start.py`，加入 fallback 補字模式選單。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`, `src/OpenCCFontGenerator/__main__.py`, `start.py`, `README.md`
+
+#### Font Metadata Improvements — 繁中名稱與文件科普補強
+- 輸出字型現在會自動補上 `zh-TW` (`languageID=1028`) 的本地化名稱記錄，提高 macOS 與中文環境中被辨識為繁中字型的機率。
+- README 新增字型術語教學、直式 Mermaid 渲染流程圖，以及 Variable CJK Family 流程說明。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`, `README.md`
+
 ### Changed
 
 #### Documentation for subset-font behavior
@@ -14,6 +38,12 @@ All notable changes to OpenCC Font Generator will be documented here.
 - **Files changed**: `README.md`, `start.py`
 
 ### Fixed
+
+#### Fallback merge reliability for composite glyphs and cleanup
+- 修正 fallback 補字時只複製最外層 glyph、沒有遞迴帶入 composite/reference 依賴的問題。
+- 修正補進來的 fallback codepoint 在 subset 清理時可能又被移除的問題。
+- `clean_unused_glyphs()` 現在也會將 glyph references 納入可達性分析，避免元件字形被誤刪。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`
 
 #### Taiwan Phrases (twp) "面" character conversion
 - 修正 `twp` (台灣用語) 模式中，單字「面」(face/surface) 被錯誤轉換為「麵」(noodles) 的問題。

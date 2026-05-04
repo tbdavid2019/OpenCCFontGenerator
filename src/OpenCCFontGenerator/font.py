@@ -1,4 +1,5 @@
 from collections import defaultdict
+import copy
 from datetime import date
 from itertools import chain, groupby
 import json
@@ -310,6 +311,19 @@ def get_reachable_glyphs(obj):
                     for item in subtable['substitutions']:
                         if glyph_name in item['from']:
                             reachable_glyphs.add(item['to'])
+    queue = list(reachable_glyphs)
+    while queue:
+        glyph_name = queue.pop()
+        glyph = obj['glyf'].get(glyph_name)
+        if not isinstance(glyph, dict):
+            continue
+        for ref in glyph.get('references', ()):
+            for key in ('glyph', 'name', 'to', 'refGlyph', 'glyphName'):
+                ref_name = ref.get(key)
+                if isinstance(ref_name, str) and ref_name not in reachable_glyphs:
+                    reachable_glyphs.add(ref_name)
+                    queue.append(ref_name)
+                    break
     return reachable_glyphs
 
 def clean_unused_glyphs(obj):
@@ -362,6 +376,58 @@ def create_pseu2word_table(obj, feature_name, conversions):
     }
     obj['GSUB']['lookupOrder'].append('pseu2word')
 
+def get_name_record_strings(obj, name_ids, language_id=None):
+    values = []
+    for item in obj['name']:
+        if item.get('nameID') in name_ids and (language_id is None or item.get('languageID') == language_id):
+            values.append(item.get('nameString', ''))
+    return [value for value in values if value]
+
+def upsert_name_record(obj, name_id, name_string, language_id=1028, platform_id=3, encoding_id=1):
+    for item in obj['name']:
+        if item.get('nameID') == name_id and item.get('languageID') == language_id and item.get('platformID') == platform_id and item.get('encodingID') == encoding_id:
+            item['nameString'] = name_string
+            return
+    obj['name'].append({
+        'platformID': platform_id,
+        'encodingID': encoding_id,
+        'languageID': language_id,
+        'nameID': name_id,
+        'nameString': name_string,
+    })
+
+def build_zh_tw_family_name(font_name):
+    if re.search(r'[\u3400-\u9fff\uf900-\ufaff]', font_name):
+        return font_name
+    if re.search(r'(^| )TC($| )', font_name):
+        return re.sub(r'(^| )TC($| )', lambda m: f"{m.group(1)}繁中{m.group(2)}", font_name).strip()
+    return f"{font_name} 繁中"
+
+def ensure_zh_tw_name_records(obj, fallback_family_name=None):
+    family_candidates = get_name_record_strings(obj, (16,), 1028) or \
+                        get_name_record_strings(obj, (16,), 1033) or \
+                        get_name_record_strings(obj, (1,), 1028) or \
+                        get_name_record_strings(obj, (1,), 1033) or \
+                        get_name_record_strings(obj, (16, 1))
+    style_candidates = get_name_record_strings(obj, (17,), 1028) or \
+                       get_name_record_strings(obj, (17,), 1033) or \
+                       get_name_record_strings(obj, (2,), 1028) or \
+                       get_name_record_strings(obj, (2,), 1033) or \
+                       get_name_record_strings(obj, (17, 2))
+
+    family_name = family_candidates[0] if family_candidates else (fallback_family_name or "OpenCC 繁中")
+    style_name = style_candidates[0] if style_candidates else "Regular"
+    family_name_zh_tw = build_zh_tw_family_name(family_name)
+    full_name_zh_tw = family_name_zh_tw if style_name == "Regular" else f"{family_name_zh_tw} {style_name}"
+
+    upsert_name_record(obj, 1, family_name_zh_tw, language_id=1028)
+    upsert_name_record(obj, 2, style_name, language_id=1028)
+    upsert_name_record(obj, 4, full_name_zh_tw, language_id=1028)
+    if get_name_record_strings(obj, (16,)):
+        upsert_name_record(obj, 16, family_name_zh_tw, language_id=1028)
+    if get_name_record_strings(obj, (17,)):
+        upsert_name_record(obj, 17, style_name, language_id=1028)
+
 def modify_metadata(obj, name_header_file=None, font_version=None, font_name=None):
     if name_header_file and str(name_header_file).endswith('.json'):
         style = next(item['nameString']
@@ -392,6 +458,9 @@ def modify_metadata(obj, name_header_file=None, font_version=None, font_name=Non
                         item['nameString'] = item['nameString'].replace(orig_fam_ps, safe_font_name_ps)
                     elif orig_fam in item['nameString']:
                         item['nameString'] = item['nameString'].replace(orig_fam, safe_font_name_ps).replace(" ", "-")
+        ensure_zh_tw_name_records(obj, fallback_family_name=font_name)
+    if name_header_file and str(name_header_file).endswith('.json'):
+        ensure_zh_tw_name_records(obj, fallback_family_name=font_name)
     if font_version is not None:
         obj['head']['fontRevision'] = font_version
 
@@ -436,50 +505,112 @@ def apply_force_vertical(obj):
             if codepoint not in obj['cmap_rev'][vertical_glyph]:
                 obj['cmap_rev'][vertical_glyph].append(codepoint)
 
+def clone_fallback_glyph(primary_obj, fallback_obj, glyph_name, cloned_map):
+    '''
+    Recursively clone a glyph from fallback into primary, including
+    referenced composite glyph dependencies.
+    '''
+    if glyph_name in cloned_map:
+        return cloned_map[glyph_name]
+    if glyph_name in primary_obj['glyf']:
+        cloned_map[glyph_name] = glyph_name
+        return glyph_name
+    if glyph_name not in fallback_obj['glyf']:
+        return None
+
+    new_glyph_name = glyph_name
+    if new_glyph_name in primary_obj['glyf']:
+        suffix = 1
+        while f"fallback_{glyph_name}_{suffix}" in primary_obj['glyf']:
+            suffix += 1
+        new_glyph_name = f"fallback_{glyph_name}_{suffix}"
+
+    glyph_copy = copy.deepcopy(fallback_obj['glyf'][glyph_name])
+    cloned_map[glyph_name] = new_glyph_name
+
+    for ref in glyph_copy.get('references', ()):
+        ref_name = None
+        ref_key = None
+        for key in ('glyph', 'name', 'to', 'refGlyph', 'glyphName'):
+            value = ref.get(key)
+            if isinstance(value, str):
+                ref_name = value
+                ref_key = key
+                break
+        if not ref_name:
+            continue
+        cloned_ref_name = clone_fallback_glyph(primary_obj, fallback_obj, ref_name, cloned_map)
+        if cloned_ref_name and ref_key:
+            ref[ref_key] = cloned_ref_name
+
+    primary_obj['glyf'][new_glyph_name] = glyph_copy
+    primary_obj['glyph_order'].append(new_glyph_name)
+
+    for table in ['hmtx', 'vmtx', 'VORG']:
+        if table in fallback_obj and glyph_name in fallback_obj[table]:
+            if table not in primary_obj:
+                primary_obj[table] = {}
+            primary_obj[table][new_glyph_name] = copy.deepcopy(fallback_obj[table][glyph_name])
+
+    return new_glyph_name
+
 def merge_fallback_glyphs(primary_obj, fallback_obj, missing_codepoints):
     '''Merge missing glyphs from fallback font into primary font.'''
+    merged_codepoints = set()
+    cloned_map = {}
+
     for cp in missing_codepoints:
         cp_str = str(cp)
-        if cp_str in fallback_obj['cmap']:
-            glyph_name = fallback_obj['cmap'][cp_str]
-            # Ensure unique name in primary
-            new_glyph_name = f"fallback_{glyph_name}_{cp_str}"
-            
-            if new_glyph_name not in primary_obj['glyf']:
-                primary_obj['glyf'][new_glyph_name] = fallback_obj['glyf'][glyph_name]
-                primary_obj['glyph_order'].append(new_glyph_name)
-                
-                # Copy metrics
-                for table in ['hmtx', 'vmtx', 'VORG']:
-                    if table in fallback_obj and glyph_name in fallback_obj[table]:
-                        if table not in primary_obj: primary_obj[table] = {}
-                        primary_obj[table][new_glyph_name] = fallback_obj[table][glyph_name]
+        if cp_str not in fallback_obj['cmap']:
+            continue
 
-            # Update primary cmap
-            primary_obj['cmap'][cp_str] = new_glyph_name
-            if new_glyph_name not in primary_obj['cmap_rev']:
-                primary_obj['cmap_rev'][new_glyph_name] = []
-            primary_obj['cmap_rev'][new_glyph_name].append(cp_str)
+        source_glyph_name = fallback_obj['cmap'][cp_str]
+        cloned_glyph_name = clone_fallback_glyph(primary_obj, fallback_obj, source_glyph_name, cloned_map)
+        if not cloned_glyph_name:
+            continue
 
-def build_font(input_file, output_file, name_header_file=None, font_version=None, ttc_index=None, config='s2t', fallback_font=None, no_punc=False, force_vertical=False, font_name=None, twp=False, output_woff2=False):
+        primary_obj['cmap'][cp_str] = cloned_glyph_name
+        if cloned_glyph_name not in primary_obj['cmap_rev']:
+            primary_obj['cmap_rev'][cloned_glyph_name] = []
+        if cp_str not in primary_obj['cmap_rev'][cloned_glyph_name]:
+            primary_obj['cmap_rev'][cloned_glyph_name].append(cp_str)
+        merged_codepoints.add(cp)
+
+    return merged_codepoints
+
+def build_missing_codepoints_from_fallback(primary_obj, fallback_obj):
+    '''Return all codepoints present in fallback but missing from primary.'''
+    primary_codepoints = build_codepoints_font(primary_obj)
+    fallback_codepoints = build_codepoints_font(fallback_obj)
+    return sorted(fallback_codepoints - primary_codepoints)
+
+def build_font(input_file, output_file, name_header_file=None, font_version=None, ttc_index=None, config='s2t', fallback_font=None, no_punc=False, force_vertical=False, font_name=None, twp=False, output_woff2=False, merge_mode='opencc'):
     # Handle legacy twp flag if passed as boolean
     if twp and config == 's2t':
         config = 'twp'
         
     font = load_font(input_file, ttc_index=ttc_index)
     fallback_font_obj = None
+    merged_fallback_cps = set()
     if fallback_font:
         print(f"Loading fallback font: {fallback_font}")
         fallback_font_obj = load_font(fallback_font)
 
     codepoints_font = build_codepoints_font(font)
+
+    if fallback_font_obj and merge_mode == 'universal':
+        missing_cps = build_missing_codepoints_from_fallback(font, fallback_font_obj)
+        if missing_cps:
+            print(f"Universally merging {len(missing_cps)} glyphs from fallback font...")
+            merged_fallback_cps = merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
+            codepoints_font = build_codepoints_font(font)
     
     # Identify what characters are missing and see if they are in fallback
     entries_char_all = build_opencc_char_table(codepoints_font, config=config, fallback_font_obj=fallback_font_obj)
     entries_word_all = build_opencc_word_table(codepoints_font, config=config, fallback_font_obj=fallback_font_obj)
 
     # If we have fallback font, perform merging for missing characters
-    if fallback_font_obj:
+    if fallback_font_obj and merge_mode != 'universal':
         needed_cps = set()
         for k, v in entries_char_all: needed_cps.add(v)
         for ks, vs in entries_word_all: 
@@ -488,7 +619,7 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
         missing_cps = [cp for cp in needed_cps if cp not in codepoints_font]
         if missing_cps:
             print(f"Merging {len(missing_cps)} glyphs from fallback font...")
-            merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
+            merged_fallback_cps = merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
             # Re-update codepoints_font after merging
             codepoints_font = build_codepoints_font(font)
 
@@ -504,9 +635,12 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
     if force_vertical:
         apply_force_vertical(font)
 
-    codepoints_final = (build_codepoints_non_han() | build_codepoints_han()) & codepoints_font
-    remove_codepoints(font, codepoints_font - codepoints_final)
-    clean_unused_glyphs(font)
+    if merge_mode == 'universal':
+        codepoints_final = codepoints_font
+    else:
+        codepoints_final = ((build_codepoints_non_han() | build_codepoints_han()) & codepoints_font) | merged_fallback_cps
+        remove_codepoints(font, codepoints_font - codepoints_final)
+        clean_unused_glyphs(font)
 
     available_glyph_count = MAX_GLYPH_COUNT - get_glyph_count(font)
     assert available_glyph_count >= len(entries_word)

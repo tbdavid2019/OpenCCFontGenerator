@@ -173,8 +173,16 @@ def main():
     print("【步驟 8】缺字補全（備用字型）/ Fallback Font")
     print("  說明: 如果目標字元在來源字型中不存在，可以從另一個字型（備用字型）中提取並補入。")
     fallback_font = prompt_existing_file("請輸入備用字型路徑", optional=True)
+    merge_mode = "opencc"
     if fallback_font:
         print(f"  ✓ 已設定備用字型：{fallback_font}\n")
+        print("【步驟 8-1】補字模式 / Merge Mode")
+        print("  1. opencc     - 只補 OpenCC 轉換規則需要的目標字（預設）")
+        print("  2. universal  - 保留來源字庫，並補入 fallback 中所有缺少的 codepoint")
+        print("  說明: universal 較接近通用型 merge font，但大型字型更容易超過 glyph 上限。")
+        merge_mode_choice = input("請輸入選項 (1/2) [預設: 1]: ").strip()
+        merge_mode = {"1": "opencc", "2": "universal"}.get(merge_mode_choice, "opencc")
+        print(f"  ✓ 已選擇補字模式：{merge_mode}\n")
     else:
         print("  ✓ 未設定備用字型。\n")
 
@@ -205,12 +213,18 @@ def main():
         print(f"  TTC 索引:    {ttc_index if ttc_index is not None else '無'}")
     print(f"  轉換標準:     {config}")
     print(f"  備用字型:     {fallback_font if fallback_font else '無'}")
+    if fallback_font:
+        print(f"  補字模式:     {merge_mode}")
     print(f"  排除標點:     {'是' if no_punc else '否'}")
     print(f"  強制直排:     {'是' if force_vertical else '否'}")
     print(f"  輸出 WOFF2:   {'是' if output_woff2 else '否'}")
     print("-" * 50)
-    print("  注意: 輸出的 _TC 字型是為 OpenCC 詞彙級轉換優化的 subset font。")
-    print("        為了在 OpenType glyph 上限內容納 GSUB 規則，程式可能不會完整保留原始字庫。")
+    if merge_mode == "universal":
+        print("  注意: universal 模式會盡量保留原始字庫並合併 fallback 缺字。")
+        print("        若字型太大，再加上 OpenCC 規則後可能超過 OpenType glyph 上限。")
+    else:
+        print("  注意: 輸出的 _TC 字型是為 OpenCC 詞彙級轉換優化的 subset font。")
+        print("        為了在 OpenType glyph 上限內容納 GSUB 規則，程式可能不會完整保留原始字庫。")
     print()
 
     confirm = prompt_yes_no("確認以上設定並開始生成？", default=True)
@@ -231,6 +245,7 @@ def main():
             ttc_index=ttc_index,
             config=config,
             fallback_font=fallback_font,
+            merge_mode=merge_mode,
             no_punc=no_punc,
             force_vertical=force_vertical,
             font_name=font_name,

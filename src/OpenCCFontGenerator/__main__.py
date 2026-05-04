@@ -27,6 +27,9 @@ def main():
         '--fallback-font', type=str, required=False,
         help='path to a secondary font to pull missing glyphs from')
     parser.add_argument(
+        '--merge-mode', type=str, default='opencc', choices=['opencc', 'universal'],
+        help='fallback merge strategy: opencc merges only conversion targets; universal preserves the source font and merges all missing codepoints from fallback')
+    parser.add_argument(
         '--no-punc', action='store_true', default=False,
         help='whether to skip conversion for punctuation and non-Han characters')
     parser.add_argument(
@@ -51,6 +54,7 @@ def main():
         ttc_index=args.ttc_index,
         config=config,
         fallback_font=args.fallback_font,
+        merge_mode=args.merge_mode,
         no_punc=args.no_punc,
         force_vertical=args.force_vertical,
         font_name=args.font_name,
