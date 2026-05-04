@@ -146,6 +146,14 @@ def build_codepoints_han():
             s.add(int(line))
         return s
 
+def build_fill_codepoints(fill_charset):
+    '''Build a target codepoint set for proactive fallback filling.'''
+    if fill_charset in (None, 'none'):
+        return set()
+    if fill_charset in ('han', 'hant-common', 'opencc-hant'):
+        return build_codepoints_han()
+    raise ValueError(f"Unsupported fill charset: {fill_charset}")
+
 def build_codepoints_font(obj):
     '''Build a set of all the codepoints in a font.'''
     return set(map(int, obj['cmap']))
@@ -339,13 +347,19 @@ def insert_empty_feature(obj, feature_name):
     for table in obj['GSUB']['languages'].values():
         if feature_name not in table['features']:
             table['features'].append(feature_name)
-    obj['GSUB']['features'][feature_name] = []
+    if feature_name not in obj['GSUB']['features']:
+        obj['GSUB']['features'][feature_name] = []
 
-def create_word2pseu_table(obj, feature_name, conversions):
+def insert_empty_features(obj, feature_names):
+    for feature_name in feature_names:
+        insert_empty_feature(obj, feature_name)
+
+def create_word2pseu_table(obj, feature_names, conversions):
     def conversion_item_len(conversion_item): return len(conversion_item[0])
     subtables = [{'substitutions': [{'from': glyph_names_k, 'to': pseudo_glyph_name} for glyph_names_k, pseudo_glyph_name in subtable]}
                  for subtable in grouper2(conversions, key=conversion_item_len)]
-    obj['GSUB']['features'][feature_name].append('word2pseu')
+    for feature_name in feature_names:
+        obj['GSUB']['features'][feature_name].append('word2pseu')
     obj['GSUB']['lookups']['word2pseu'] = {
         'type': 'gsub_ligature',
         'flags': {},
@@ -353,10 +367,11 @@ def create_word2pseu_table(obj, feature_name, conversions):
     }
     obj['GSUB']['lookupOrder'].append('word2pseu')
 
-def create_char2char_table(obj, feature_name, conversions):
+def create_char2char_table(obj, feature_names, conversions):
     subtables = [{k: v for k, v in subtable}
                  for subtable in grouper(conversions)]
-    obj['GSUB']['features'][feature_name].append('char2char')
+    for feature_name in feature_names:
+        obj['GSUB']['features'][feature_name].append('char2char')
     obj['GSUB']['lookups']['char2char'] = {
         'type': 'gsub_single',
         'flags': {},
@@ -364,11 +379,12 @@ def create_char2char_table(obj, feature_name, conversions):
     }
     obj['GSUB']['lookupOrder'].append('char2char')
 
-def create_pseu2word_table(obj, feature_name, conversions):
+def create_pseu2word_table(obj, feature_names, conversions):
     def conversion_item_len(conversion_item): return len(conversion_item[1])
     subtables = [{k: v for k, v in subtable}
                  for subtable in grouper2(conversions, key=conversion_item_len)]
-    obj['GSUB']['features'][feature_name].append('pseu2word')
+    for feature_name in feature_names:
+        obj['GSUB']['features'][feature_name].append('pseu2word')
     obj['GSUB']['lookups']['pseu2word'] = {
         'type': 'gsub_multiple',
         'flags': {},
@@ -584,7 +600,7 @@ def build_missing_codepoints_from_fallback(primary_obj, fallback_obj):
     fallback_codepoints = build_codepoints_font(fallback_obj)
     return sorted(fallback_codepoints - primary_codepoints)
 
-def build_font(input_file, output_file, name_header_file=None, font_version=None, ttc_index=None, config='s2t', fallback_font=None, no_punc=False, force_vertical=False, font_name=None, twp=False, output_woff2=False, merge_mode='opencc'):
+def build_font(input_file, output_file, name_header_file=None, font_version=None, ttc_index=None, config='s2t', fallback_font=None, no_punc=False, force_vertical=False, font_name=None, twp=False, output_woff2=False, merge_mode='opencc', fill_charset='none'):
     # Handle legacy twp flag if passed as boolean
     if twp and config == 's2t':
         config = 'twp'
@@ -595,14 +611,24 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
     if fallback_font:
         print(f"Loading fallback font: {fallback_font}")
         fallback_font_obj = load_font(fallback_font)
+    if fill_charset != 'none' and not fallback_font_obj:
+        raise ValueError("fill_charset 需要搭配 fallback_font，否則無法主動補字。")
 
     codepoints_font = build_codepoints_font(font)
+
+    fill_codepoints = build_fill_codepoints(fill_charset)
+    if fallback_font_obj and fill_codepoints:
+        missing_cps = sorted(cp for cp in fill_codepoints if cp not in codepoints_font and str(cp) in fallback_font_obj['cmap'])
+        if missing_cps:
+            print(f"Pre-filling {len(missing_cps)} glyphs from fallback charset '{fill_charset}'...")
+            merged_fallback_cps |= merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
+            codepoints_font = build_codepoints_font(font)
 
     if fallback_font_obj and merge_mode == 'universal':
         missing_cps = build_missing_codepoints_from_fallback(font, fallback_font_obj)
         if missing_cps:
             print(f"Universally merging {len(missing_cps)} glyphs from fallback font...")
-            merged_fallback_cps = merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
+            merged_fallback_cps |= merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
             codepoints_font = build_codepoints_font(font)
     
     # Identify what characters are missing and see if they are in fallback
@@ -619,7 +645,7 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
         missing_cps = [cp for cp in needed_cps if cp not in codepoints_font]
         if missing_cps:
             print(f"Merging {len(missing_cps)} glyphs from fallback font...")
-            merged_fallback_cps = merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
+            merged_fallback_cps |= merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
             # Re-update codepoints_font after merging
             codepoints_font = build_codepoints_font(font)
 
@@ -662,11 +688,13 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
         glyph_name_v = codepoint_to_glyph_name(font, codepoint_v)
         char2char_table.append((glyph_name_k, glyph_name_v))
 
-    feature_name = f'liga_{config}' if config != 's2t' else 'liga_s2t'
-    insert_empty_feature(font, feature_name)
-    create_word2pseu_table(font, feature_name, word2pseu_table)
-    create_char2char_table(font, feature_name, char2char_table)
-    create_pseu2word_table(font, feature_name, pseu2word_table)
+    # Kindle and other limited renderers are more likely to honor standard
+    # OpenType feature tags than custom tags like "liga_s2t".
+    feature_names = ['liga', 'rlig', 'ccmp']
+    insert_empty_features(font, feature_names)
+    create_word2pseu_table(font, feature_names, word2pseu_table)
+    create_char2char_table(font, feature_names, char2char_table)
+    create_pseu2word_table(font, feature_names, pseu2word_table)
 
     modify_metadata(font, name_header_file, font_version, font_name=font_name)
     save_font(font, output_file, output_woff2=output_woff2)

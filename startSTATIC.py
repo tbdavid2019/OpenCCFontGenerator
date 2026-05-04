@@ -72,8 +72,13 @@ def main():
     fallback_dir = prompt_existing_dir("請輸入 fallback 字型資料夾", optional=True)
     fallback_prefix = None
     merge_mode = "opencc"
+    fill_charset = "none"
     if fallback_dir:
         fallback_prefix = input("請輸入 fallback 檔名前綴 [例如: NotoSansTC，可留空]: ").strip() or None
+        print("【步驟 3-0】主動補字集 / Fill Charset")
+        print("  1. none         - 不先主動補字")
+        print("  2. hant-common  - 先從 fallback 補常用漢字/繁中字集（預設）")
+        fill_charset = {"1": "none", "2": "hant-common"}.get(input("請輸入選項 (1/2) [預設: 2]: ").strip(), "hant-common")
         print("【步驟 3-1】補字模式 / Merge Mode")
         print("  1. opencc     - 只補 OpenCC 轉換規則需要的目標字")
         print("  2. universal  - 保留來源字庫，並補入 fallback 中所有缺少的 codepoint（預設）")
@@ -110,6 +115,7 @@ def main():
     print(f"  輸出資料夾:   {output_dir}")
     print(f"  Fallback 資料夾: {fallback_dir if fallback_dir else '無'}")
     print(f"  Fallback 前綴: {fallback_prefix if fallback_prefix else '無'}")
+    print(f"  主動補字集:   {fill_charset if fallback_dir else '無'}")
     print(f"  補字模式:     {merge_mode if fallback_dir else '無'}")
     print(f"  轉換標準:     {config}")
     print(f"  排除標點:     {'是' if no_punc else '否'}")
@@ -134,6 +140,7 @@ def main():
             fallback_prefix=fallback_prefix,
             config=config,
             merge_mode=merge_mode,
+            fill_charset=fill_charset,
             no_punc=no_punc,
             force_vertical=force_vertical,
             output_woff2=output_woff2,

@@ -99,6 +99,7 @@ def build_variable_cjk_family(
                 config=config,
                 fallback_font=fallback_font,
                 merge_mode="universal",
+                fill_charset="hant-common",
                 output_woff2=output_woff2,
                 font_name=f"{family_name_prefix} {display_name}" if family_name_prefix else None,
             )

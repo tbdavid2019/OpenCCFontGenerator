@@ -174,8 +174,16 @@ def main():
     print("  說明: 如果目標字元在來源字型中不存在，可以從另一個字型（備用字型）中提取並補入。")
     fallback_font = prompt_existing_file("請輸入備用字型路徑", optional=True)
     merge_mode = "opencc"
+    fill_charset = "none"
     if fallback_font:
         print(f"  ✓ 已設定備用字型：{fallback_font}\n")
+        print("【步驟 8-0】主動補字集 / Fill Charset")
+        print("  1. none         - 不先主動補字（預設）")
+        print("  2. hant-common  - 先從 fallback 補常用漢字/繁中字集")
+        print("  說明: 若來源字型繁中字區不完整，建議選 2。")
+        fill_charset_choice = input("請輸入選項 (1/2) [預設: 1]: ").strip()
+        fill_charset = {"1": "none", "2": "hant-common"}.get(fill_charset_choice, "none")
+        print(f"  ✓ 已選擇主動補字集：{fill_charset}\n")
         print("【步驟 8-1】補字模式 / Merge Mode")
         print("  1. opencc     - 只補 OpenCC 轉換規則需要的目標字（預設）")
         print("  2. universal  - 保留來源字庫，並補入 fallback 中所有缺少的 codepoint")
@@ -214,6 +222,7 @@ def main():
     print(f"  轉換標準:     {config}")
     print(f"  備用字型:     {fallback_font if fallback_font else '無'}")
     if fallback_font:
+        print(f"  主動補字集:   {fill_charset}")
         print(f"  補字模式:     {merge_mode}")
     print(f"  排除標點:     {'是' if no_punc else '否'}")
     print(f"  強制直排:     {'是' if force_vertical else '否'}")
@@ -246,6 +255,7 @@ def main():
             config=config,
             fallback_font=fallback_font,
             merge_mode=merge_mode,
+            fill_charset=fill_charset,
             no_punc=no_punc,
             force_vertical=force_vertical,
             font_name=font_name,

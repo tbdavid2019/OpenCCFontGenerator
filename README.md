@@ -33,7 +33,7 @@
 
 ## 運作原理 / How It Works
 
-本工具在字型的 **GSUB（字形替換）表**中建立 `liga_opencc` 功能，利用 OpenCC 字典將字形映射到對應的目標字形，包含詞彙層面的多對一替換（例如「软件」→「軟體」）。
+本工具會在字型的 **GSUB（字形替換）表**中建立 OpenCC 替換規則，並掛到標準 OpenType feature（如 `liga`、`rlig`、`ccmp`），利用 OpenCC 字典將字形映射到對應的目標字形，包含詞彙層面的多對一替換（例如「软件」→「軟體」）。
 
 當開啟「字型補全」功能時，程式會檢查來源字型是否缺少目標字元，並自動從備用字型中抓取所需的字形數據注入到輸出字型中。
 即使來源字型本身沒有 `GSUB` 或 `GPOS` 表，也可正常完成缺字補全與清理流程。
@@ -244,6 +244,7 @@ python -m OpenCCFontGenerator \
   [--config <s2t|twp|s2tw|s2hk|t2s>] \
   [--fallback-font <備用字型路徑>] \
   [--merge-mode <opencc|universal>] \
+  [--fill-charset <none|hant-common|opencc-hant|han>] \
   [--font-name <新字型名稱>] \
   [--font-version <版本號碼>] \
   [--no-punc] \
@@ -260,6 +261,7 @@ python -m OpenCCFontGenerator \
 | `--config` | OpenCC 配置（預設: `s2t`） | ❌ |
 | `--fallback-font` | 備用字型路徑（用於補齊缺字） | ❌ |
 | `--merge-mode` | 補字模式：`opencc` 僅補轉換目標字；`universal` 會保留來源字庫並合併 fallback 缺少字元 | ❌ |
+| `--fill-charset` | 先主動從 fallback 補指定字集；`hant-common` 適合先補常用繁中字區 | ❌ |
 | `--font-name` | 新字型的名稱 | ❌ |
 | `--font-version` | 覆寫字型版本號碼 | ❌ |
 | `--twp` | 快捷鍵：啟用台灣慣用語轉換 (等同 `--config twp`) | ❌ |
@@ -275,6 +277,56 @@ python -m OpenCCFontGenerator \
 現在，您可以指定一個「備用字型」（例如：思源黑體繁體版），工具會自動從中提取缺失的繁體字形並合併到您的輸出字型中。
 
 預設情況下，`--fallback-font` 的作用是補齊轉換目標所需的缺字，不會改變本工具整體的 subset 輸出策略。
+
+如果您的來源字型本身繁中字區不完整，建議搭配 `--fill-charset hant-common`，先主動從 fallback 補常用繁中字集，再進行 OpenCC 轉換。
+
+```bash
+python -m OpenCCFontGenerator \
+  -i MyFont.ttf \
+  -o MyFont_TC.ttf \
+  --fallback-font NotoSansTC-Regular.ttf \
+  --fill-charset hant-common \
+  --merge-mode universal
+```
+
+### `--fill-charset` 選項差異
+
+目前支援的值有：
+
+- `none`
+- `hant-common`
+- `opencc-hant`
+- `han`
+
+請注意：**在目前版本中，`hant-common` / `opencc-hant` / `han` 三者在實作上暫時等價**，都會使用專案內建的 Han codepoint cache 先補字。
+
+也就是說，現階段它們的差別主要是**語意命名**，方便未來拆分成更細的補字策略：
+
+- `han`：偏廣義 Han 字集合
+- `hant-common`：偏常用繁中字集
+- `opencc-hant`：偏 OpenCC 轉換相關繁中字集
+
+如果您目前的目標是：
+- 先補足來源字型缺少的繁體中文字
+- 再讓 OpenCC 自動把簡體顯示成繁體
+
+那麼**這是可以同時做到的**，建議直接使用：
+
+```bash
+--fill-charset hant-common --merge-mode universal --config s2t
+```
+
+這組參數的意義是：
+
+1. 先從 fallback 補常用繁中字
+2. 再保留來源字庫並合併其他缺字
+3. 最後套用 OpenCC 簡轉繁規則
+
+所以答案不是「沒法既要又要」，而是：
+
+- **可以既要又要**
+- 只是要先補字，再做 OpenCC
+- 目前最推薦的組合就是 `hant-common + universal + s2t`
 
 如果您需要更接近「通用型 merge font」的行為，可以改用：
 
@@ -321,6 +373,7 @@ sh runVF.sh
 - 這會得到「一整套多權重 family」
 - 不是單一真正的 variable CJK 字型
 - 如果 fallback 本身是 static 字型，中文部分不會真正擁有 variable interpolation 資料
+- 目前 `runVF.sh` 預設也會先執行 `fill-charset = hant-common`，優先補常用繁中字
 
 ## Static Font Family 流程
 
@@ -349,6 +402,7 @@ sh runSTATIC.sh
 - 您手上的來源字型不是 variable font
 - 想把一整組靜態字重 family 一次轉完
 - 想搭配 `NotoSansTC-*` 或其他靜態 CJK fallback 字型
+- 想在轉換前先主動補足常用繁中字區
 
 如果來源本身只有單一靜態字型，也可以使用這個流程；它會把它當成只有一個成員的 family 來處理。
 

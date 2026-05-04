@@ -25,6 +25,12 @@ All notable changes to OpenCC Font Generator will be documented here.
 - 更新互動式精靈 `start.py`，加入 fallback 補字模式選單。
 - **Files changed**: `src/OpenCCFontGenerator/font.py`, `src/OpenCCFontGenerator/__main__.py`, `start.py`, `README.md`
 
+#### `--fill-charset` — 先補字集再轉換
+- 新增 `--fill-charset` 參數，支援在 OpenCC 流程前先主動從 fallback 字型補指定字集。
+- 目前內建 `hant-common / opencc-hant / han`，會使用專案內建的 Han codepoint cache 先補常用繁中字區。
+- `runVF.sh` 現在預設會先補 `hant-common`；`runSTATIC.sh` 與 `start.py` 也新增對應選項。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`, `src/OpenCCFontGenerator/__main__.py`, `start.py`, `startSTATIC.py`, `src/OpenCCFontGenerator/static_family.py`, `src/OpenCCFontGenerator/vf_family.py`, `README.md`
+
 #### Font Metadata Improvements — 繁中名稱與文件科普補強
 - 輸出字型現在會自動補上 `zh-TW` (`languageID=1028`) 的本地化名稱記錄，提高 macOS 與中文環境中被辨識為繁中字型的機率。
 - README 新增字型術語教學、直式 Mermaid 渲染流程圖，以及 Variable CJK Family 流程說明。
@@ -44,6 +50,11 @@ All notable changes to OpenCC Font Generator will be documented here.
 - 修正補進來的 fallback codepoint 在 subset 清理時可能又被移除的問題。
 - `clean_unused_glyphs()` 現在也會將 glyph references 納入可達性分析，避免元件字形被誤刪。
 - **Files changed**: `src/OpenCCFontGenerator/font.py`
+
+#### Kindle GSUB compatibility for OpenCC substitution
+- 修正 OpenCC 替換規則原本掛在自訂 feature tag（如 `liga_s2t`）上的相容性問題。
+- 現在同一組 GSUB lookup 會同時掛到標準 OpenType feature：`liga`、`rlig`、`ccmp`，提高 Kindle 與其他受限閱讀器啟用替換規則的機率。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`, `README.md`
 
 #### Taiwan Phrases (twp) "面" character conversion
 - 修正 `twp` (台灣用語) 模式中，單字「面」(face/surface) 被錯誤轉換為「麵」(noodles) 的問題。

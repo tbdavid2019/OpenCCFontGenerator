@@ -30,6 +30,9 @@ def main():
         '--merge-mode', type=str, default='opencc', choices=['opencc', 'universal'],
         help='fallback merge strategy: opencc merges only conversion targets; universal preserves the source font and merges all missing codepoints from fallback')
     parser.add_argument(
+        '--fill-charset', type=str, default='none', choices=['none', 'hant-common', 'opencc-hant', 'han'],
+        help='proactively fill a charset from fallback before OpenCC conversion; hant-common/opencc-hant use the built-in Han codepoint cache')
+    parser.add_argument(
         '--no-punc', action='store_true', default=False,
         help='whether to skip conversion for punctuation and non-Han characters')
     parser.add_argument(
@@ -55,6 +58,7 @@ def main():
         config=config,
         fallback_font=args.fallback_font,
         merge_mode=args.merge_mode,
+        fill_charset=args.fill_charset,
         no_punc=args.no_punc,
         force_vertical=args.force_vertical,
         font_name=args.font_name,
