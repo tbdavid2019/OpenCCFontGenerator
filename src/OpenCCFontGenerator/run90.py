@@ -4,6 +4,8 @@ import subprocess
 import tempfile
 import sys
 
+from .font import apply_kobo_compatibility
+
 def load_font_json(path, ttc_index=None):
     '''Load a font as a JSON object via otfccdump.'''
     ttc_index_args = () if ttc_index is None else ('--ttc-index', str(ttc_index))
@@ -82,7 +84,7 @@ def build_codepoints_han():
     
     return s
 
-def process_rotation(input_path, output_path, ttc_index=None, center_x=500, center_y=500, rotate_all=False, direction='ccw'):
+def process_rotation(input_path, output_path, ttc_index=None, center_x=500, center_y=500, rotate_all=False, direction='ccw', kobo_mode=False):
     font = load_font_json(input_path, ttc_index=ttc_index)
     
     cmap_rev = build_cmap_rev(font)
@@ -126,6 +128,9 @@ def process_rotation(input_path, output_path, ttc_index=None, center_x=500, cent
     for item in font['name']:
         if item['nameID'] in (1, 3, 4, 16):
             item['nameString'] += f" {suffix}"
+            
+    if kobo_mode:
+        apply_kobo_compatibility(font)
             
     save_font_json(font, output_path)
     print(f"✅ Successfully created rotated font: {output_path}")

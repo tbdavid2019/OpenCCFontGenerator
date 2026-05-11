@@ -444,7 +444,7 @@ def ensure_zh_tw_name_records(obj, fallback_family_name=None):
     if get_name_record_strings(obj, (17,)):
         upsert_name_record(obj, 17, style_name, language_id=1028)
 
-def modify_metadata(obj, name_header_file=None, font_version=None, font_name=None):
+def modify_metadata(obj, name_header_file=None, font_version=None, font_name=None, kobo_mode=False):
     if name_header_file and str(name_header_file).endswith('.json'):
         style = next(item['nameString']
                      for item in obj['name'] if item['nameID'] == 17)
@@ -474,11 +474,51 @@ def modify_metadata(obj, name_header_file=None, font_version=None, font_name=Non
                         item['nameString'] = item['nameString'].replace(orig_fam_ps, safe_font_name_ps)
                     elif orig_fam in item['nameString']:
                         item['nameString'] = item['nameString'].replace(orig_fam, safe_font_name_ps).replace(" ", "-")
-        ensure_zh_tw_name_records(obj, fallback_family_name=font_name)
+        if not kobo_mode:
+            ensure_zh_tw_name_records(obj, fallback_family_name=font_name)
     if name_header_file and str(name_header_file).endswith('.json'):
-        ensure_zh_tw_name_records(obj, fallback_family_name=font_name)
+        if not kobo_mode:
+            ensure_zh_tw_name_records(obj, fallback_family_name=font_name)
+    if kobo_mode:
+        apply_kobo_compatibility(obj)
+
     if font_version is not None:
         obj['head']['fontRevision'] = font_version
+
+def apply_kobo_compatibility(obj):
+    '''
+    Enforce strict naming rules for Kobo eReaders:
+    - Family name should contain no spaces and ideally be ASCII.
+    - Remove non-English/non-ASCII name records to prevent Kobo from picking them unpredictably.
+    '''
+    # Remove any existing Chinese/Taiwanese name records (languageID 1028 or 2052 or platform 1 language 2, 25, 53)
+    # just to ensure Kobo relies purely on the English records.
+    # Also strip spaces from family names in English records.
+    new_names = []
+    for item in obj.get('name', []):
+        lang_id = item.get('languageID')
+        plat_id = item.get('platformID')
+        # Filter out Mac Traditional Chinese (plat 1, lang 2), Windows zh-TW (plat 3, lang 1028), Windows zh-CN (plat 3, lang 2052)
+        if (plat_id == 3 and lang_id in (1028, 2052, 3076, 4100, 5124)) or (plat_id == 1 and lang_id in (2, 25, 53)):
+            continue
+            
+        name_str = item.get('nameString', '')
+        # Only keep strictly ASCII name strings to be absolutely safe for Kobo
+        if not all(ord(c) < 128 for c in name_str):
+            continue
+
+        name_id = item.get('nameID')
+        if name_id in (1, 16):
+            # Family Name: Remove spaces
+            item['nameString'] = name_str.replace(" ", "")
+        elif name_id in (3, 4, 6):
+            # Unique ID, Full Name, PostScript Name: Replace spaces with hyphens
+            item['nameString'] = name_str.replace(" ", "-")
+            
+        new_names.append(item)
+        
+    obj['name'] = new_names
+
 
 def build_name_header(name_header_file, style, version, date):
     with open(name_header_file) as f:
@@ -600,7 +640,7 @@ def build_missing_codepoints_from_fallback(primary_obj, fallback_obj):
     fallback_codepoints = build_codepoints_font(fallback_obj)
     return sorted(fallback_codepoints - primary_codepoints)
 
-def build_font(input_file, output_file, name_header_file=None, font_version=None, ttc_index=None, config='s2t', fallback_font=None, no_punc=False, force_vertical=False, font_name=None, twp=False, output_woff2=False, merge_mode='opencc', fill_charset='none'):
+def build_font(input_file, output_file, name_header_file=None, font_version=None, ttc_index=None, config='s2t', fallback_font=None, no_punc=False, force_vertical=False, font_name=None, twp=False, output_woff2=False, merge_mode='opencc', fill_charset='none', kobo_mode=False):
     # Handle legacy twp flag if passed as boolean
     if twp and config == 's2t':
         config = 'twp'
@@ -696,5 +736,5 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
     create_char2char_table(font, feature_names, char2char_table)
     create_pseu2word_table(font, feature_names, pseu2word_table)
 
-    modify_metadata(font, name_header_file, font_version, font_name=font_name)
+    modify_metadata(font, name_header_file, font_version, font_name=font_name, kobo_mode=kobo_mode)
     save_font(font, output_file, output_woff2=output_woff2)

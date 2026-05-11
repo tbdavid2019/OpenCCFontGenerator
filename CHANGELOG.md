@@ -8,6 +8,12 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ### Added
 
+#### `--kobo` — Kobo eReader 相容模式
+- 新增 `--kobo` CLI 參數與精靈選項。
+- 專門針對 Kobo eReader 的嚴格字型解析機制設計，修正因 Family Name 包含空格或非 ASCII 字元導致無法正確辨識與群組的問題。
+- 開啟後，會強制濾除中文命名紀錄 (如 `zh-TW`)，並確保 `nameID 1/2/4/6/16/17` 符合純英文無空白的嚴格格式。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`, `src/OpenCCFontGenerator/__main__.py`, `src/OpenCCFontGenerator/static_family.py`, `src/OpenCCFontGenerator/vf_family.py`, `startSTATIC.py`, `startVF.py`, `start.py`
+
 #### Variable CJK Family Builder — variable 拉丁字型多權重合成流程
 - 新增 `runVF.sh` 與 `startVF.py` 互動精靈，支援將 variable 拉丁字型展開成多個 static 權重 instance，並與對應的 CJK fallback 字型逐一合成。
 - 新增 `src/OpenCCFontGenerator/vf_family.py`，內含 variable font `wght` 軸展開、fallback 權重配對與批次輸出整套 family 的核心流程。

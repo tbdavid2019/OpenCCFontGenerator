@@ -42,6 +42,11 @@ def main():
         '--woff2', action='store_true', default=False,
         help='whether to additionally output WOFF2 format')
 
+    parser.add_argument(
+        '--kobo', action='store_true', default=False,
+        help='enable Kobo eReader compatibility mode (strict ASCII naming, no spaces in family name)'
+    )
+
     args = parser.parse_args()
 
     # Handle legacy --twp flag
@@ -63,6 +68,7 @@ def main():
         force_vertical=args.force_vertical,
         font_name=args.font_name,
         output_woff2=args.woff2,
+        kobo_mode=args.kobo,
     )
 
 

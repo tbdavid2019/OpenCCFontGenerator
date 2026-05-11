@@ -98,8 +98,8 @@ def main():
     print("【步驟 5】旋轉範圍 / Rotation Scope")
     print("  1. 全部字元（包含中英數、標點符號全部躺平）")
     print("  2. 僅限漢字（英文與數字保持原樣，中文字躺平）")
-    rotate_choice = input("請選擇範圍 (1/2) [預設: 1]: ").strip()
-    rotate_all = (rotate_choice != "2")
+    scope_choice = input("請選擇範圍 (1/2) [預設: 2]: ").strip()
+    rotate_all = (scope_choice == "1")
     print(f"  ✓ 已選擇：{'全部字元' if rotate_all else '僅限漢字'}\n")
 
     # --- Step 6: TTC index (optional) ---
@@ -109,17 +109,24 @@ def main():
         ttc_index = prompt_int_optional("請輸入字型索引 (自 0 開始)", default=0)
         print()
 
+    # --- Step 7: Kobo Mode ---
+    print("【步驟 7】Kobo 相容模式 / Kobo Compatibility Mode")
+    print("  說明: 強制移除中文命名紀錄並修正 Family name 格式，避免 Kobo 無法辨識。")
+    kobo_mode = prompt_yes_no("是否開啟 Kobo 相容模式？", default=False)
+    print()
+
     # --- Summary ---
     print("-" * 50)
     print("  設定摘要 / Summary")
     print("-" * 50)
-    print(f"  來源檔案:     {input_file}")
-    print(f"  輸出檔案:     {output_file}")
-    print(f"  旋轉方向:     {'順時針 90°' if direction == 'cw' else '逆時針 90°'}")
+    print(f"  來源字型:     {input_file}")
+    print(f"  輸出路徑:     {output_file}")
+    print(f"  旋轉方向:     {'順時針 90 度' if direction == 'cw' else '逆時針 90 度'}")
     print(f"  旋轉中心:     ({center_x}, {center_y})")
-    print(f"  旋轉範圍:     {'全部字元' if rotate_all else '僅中文字'}")
+    print(f"  旋轉範圍:     {'全部字元' if rotate_all else '僅限漢字'}")
     if ttc_index is not None:
         print(f"  TTC 索引:     {ttc_index}")
+    print(f"  Kobo 相容:    {'是' if kobo_mode else '否'}")
     print("-" * 50)
     print()
 
@@ -139,7 +146,8 @@ def main():
             center_x=center_x,
             center_y=center_y,
             rotate_all=rotate_all,
-            direction=direction
+            direction=direction,
+            kobo_mode=kobo_mode
         )
     except Exception as e:
         print(f"❌ 旋轉失敗：{e}")

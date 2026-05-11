@@ -258,6 +258,15 @@ python -m OpenCCFontGenerator \
 | `-i`, `--input-file` | 來源字型路徑（.ttf / .otf / .ttc / .woff2） | ✅ |
 | `-o`, `--output-file` | 輸出字型路徑 | ✅ |
 | `--woff2` | 是否額外輸出 WOFF2 格式 | ❌ |
+| `--kobo` | 開啟 Kobo eReader 相容模式，強制清理 metadata | ❌ |
+
+## Kobo 相容模式 (`--kobo`)
+
+Kobo eReader 對於側載字型 (sideloaded fonts) 的元資料（metadata）解析非常嚴格。如果輸出的字型在 Kobo 上出現無法群組、未辨識，或中文字型名稱顯示亂碼等問題，請加上 `--kobo` 參數（或在互動精靈中開啟）。
+
+這個模式會：
+- 將 Family Name (家族名稱) 中的空格去除。
+- 強制過濾掉 `name` table 中非 ASCII、或非純英文（如 `zh-TW` 繁中）的字串紀錄，確保 Kobo 只能讀取乾淨的英文命名紀錄，以避免它隨機挑選到無法解析的中文名稱。
 | `--config` | OpenCC 配置（預設: `s2t`） | ❌ |
 | `--fallback-font` | 備用字型路徑（用於補齊缺字） | ❌ |
 | `--merge-mode` | 補字模式：`opencc` 僅補轉換目標字；`universal` 會保留來源字庫並合併 fallback 缺少字元 | ❌ |

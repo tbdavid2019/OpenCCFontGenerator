@@ -66,6 +66,7 @@ def build_variable_cjk_family(
     output_woff2=False,
     family_name_prefix=None,
     weights=None,
+    kobo_mode=False,
 ):
     axes = detect_variable_axes(input_file)
     if "wght" not in axes:
@@ -102,6 +103,7 @@ def build_variable_cjk_family(
                 fill_charset="hant-common",
                 output_woff2=output_woff2,
                 font_name=f"{family_name_prefix} {display_name}" if family_name_prefix else None,
+                kobo_mode=kobo_mode,
             )
             results.append({
                 "weight": display_name,

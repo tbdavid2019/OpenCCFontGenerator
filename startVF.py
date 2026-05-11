@@ -85,8 +85,9 @@ def main():
     family_name_prefix = input("請輸入輸出 family 名稱前綴 (直接 Enter 使用原 variable 字型名稱): ").strip() or None
     print()
 
-    print("【步驟 7】是否額外輸出 WOFF2 / Additional WOFF2 Output")
+    print("【步驟 7】其他選項 / Additional Options")
     output_woff2 = prompt_yes_no("是否同時輸出 WOFF2？", default=False)
+    kobo_mode = prompt_yes_no("是否開啟 Kobo 相容模式 (移除中文命名/修正 Family name 空格)？", default=False)
     print()
 
     print("-" * 56)
@@ -117,6 +118,7 @@ def main():
             config=config,
             output_woff2=output_woff2,
             family_name_prefix=family_name_prefix,
+            kobo_mode=kobo_mode,
         )
     except Exception as e:
         print(f"❌ 建立失敗：{e}")

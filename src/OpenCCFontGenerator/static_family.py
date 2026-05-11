@@ -104,6 +104,7 @@ def build_static_cjk_family(
     force_vertical=False,
     output_woff2=False,
     family_name_prefix=None,
+    kobo_mode=False,
 ):
     source_files = collect_source_fonts(input_path)
     fallback_candidates = collect_fallback_candidates(fallback_dir, fallback_prefix) if fallback_dir else None
@@ -128,6 +129,7 @@ def build_static_cjk_family(
             force_vertical=force_vertical,
             output_woff2=output_woff2,
             font_name=build_font_name_for_source(source_file, family_name_prefix),
+            kobo_mode=kobo_mode,
         )
 
         results.append({

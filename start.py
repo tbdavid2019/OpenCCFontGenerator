@@ -91,19 +91,19 @@ def main():
 
     # --- Step 1: Conversion mode ---
     print("【步驟 1】選擇轉換模式 / Conversion Mode")
-    print("  1. 包含標點符號轉換（預設）")
-    print("  2. 排除標點符號轉換")
+    print("  1. 包含標點符號轉換")
+    print("  2. 排除標點符號轉換（預設）")
     print()
-    no_punc = False
+    no_punc = True
     while True:
-        choice = input("請輸入選項 (1/2) [預設: 1]: ").strip()
-        if choice in ("", "1"):
-            no_punc = False
-            print("  ✓ 已選擇：包含標點符號轉換\n")
-            break
-        elif choice == "2":
+        choice = input("請輸入選項 (1/2) [預設: 2]: ").strip()
+        if choice in ("", "2"):
             no_punc = True
             print("  ✓ 已選擇：排除標點符號轉換\n")
+            break
+        elif choice == "1":
+            no_punc = False
+            print("  ✓ 已選擇：包含標點符號轉換\n")
             break
         else:
             print("  ❌ 請輸入 1 或 2。")
@@ -206,6 +206,12 @@ def main():
     output_woff2 = prompt_yes_no("是否同時輸出 WOFF2 格式？", default=False)
     print()
 
+    # --- Step 11: Kobo Mode ---
+    print("【步驟 11】Kobo 相容模式 / Kobo Compatibility Mode")
+    print("  說明: 強制移除中文命名紀錄並修正 Family name 格式，避免 Kobo 無法辨識。")
+    kobo_mode = prompt_yes_no("是否開啟 Kobo 相容模式？", default=False)
+    print()
+
     # --- Summary ---
     print("-" * 50)
     print("  設定摘要 / Summary")
@@ -227,6 +233,7 @@ def main():
     print(f"  排除標點:     {'是' if no_punc else '否'}")
     print(f"  強制直排:     {'是' if force_vertical else '否'}")
     print(f"  輸出 WOFF2:   {'是' if output_woff2 else '否'}")
+    print(f"  Kobo 相容:    {'是' if kobo_mode else '否'}")
     print("-" * 50)
     if merge_mode == "universal":
         print("  注意: universal 模式會盡量保留原始字庫並合併 fallback 缺字。")
@@ -260,6 +267,7 @@ def main():
             force_vertical=force_vertical,
             font_name=font_name,
             output_woff2=output_woff2,
+            kobo_mode=kobo_mode,
         )
     except Exception as e:
         print(f"❌ 生成失敗：{e}")
