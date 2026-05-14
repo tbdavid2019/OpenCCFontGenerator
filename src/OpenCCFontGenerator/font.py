@@ -176,7 +176,7 @@ def build_codepoints_non_han():
         range(0xFF61, 0xFF64 + 1),
     ))
 
-def build_opencc_char_table(codepoints_font, config='s2t', fallback_font_obj=None):
+def build_opencc_char_table(config='s2t'):
     entries = []
     
     cache_file = path.join(HERE, f'cache/convert_table_chars_{config}.txt')
@@ -192,19 +192,11 @@ def build_opencc_char_table(codepoints_font, config='s2t', fallback_font_obj=Non
     with open(cache_file) as f:
         for line in f:
             k, v = line.rstrip('\n').split('\t')
-            codepoint_k = ord(k)
-            codepoint_v = ord(v)
-            
-            # Key must be in font. Value must be in font OR in fallback font
-            if codepoint_k in codepoints_font:
-                if codepoint_v in codepoints_font:
-                    entries.append((codepoint_k, codepoint_v))
-                elif fallback_font_obj and str(codepoint_v) in fallback_font_obj['cmap']:
-                    entries.append((codepoint_k, codepoint_v))
+            entries.append((ord(k), ord(v)))
 
     return entries
 
-def build_opencc_word_table(codepoints_font, config='s2t', fallback_font_obj=None):
+def build_opencc_word_table(config='s2t'):
     entries = []
     
     cache_file = path.join(HERE, f'cache/convert_table_words_{config}.txt')
@@ -221,20 +213,48 @@ def build_opencc_word_table(codepoints_font, config='s2t', fallback_font_obj=Non
             k, v = line.rstrip('\n').split('\t')
             codepoints_k = tuple(ord(c) for c in k)
             codepoints_v = tuple(ord(c) for c in v)
-            
-            # Check if all keys are in font
-            if all(cp in codepoints_font for cp in codepoints_k):
-                # Check if all values are in font or fallback
-                valid_v = True
-                for cp in codepoints_v:
-                    if cp not in codepoints_font:
-                        if not fallback_font_obj or str(cp) not in fallback_font_obj['cmap']:
-                            valid_v = False
-                            break
-                if valid_v:
-                    entries.append((codepoints_k, codepoints_v))
+            entries.append((codepoints_k, codepoints_v))
 
     return entries
+
+def apply_variants(obj, config='s2t'):
+    '''
+    Apply variant mappings (heteronyms/variants) to the font's cmap.
+    This helps fill gaps where a font might have one form of a character but not another.
+    '''
+    variants_files = [path.join(HERE, 'opencc_data/Variants.txt')]
+    if config in ('twp', 's2tw'):
+        variants_files.append(path.join(HERE, 'opencc_data/Var_tw.txt'))
+    elif config == 's2hk':
+        variants_files.append(path.join(HERE, 'opencc_data/Var_hk.txt'))
+    
+    for vf in variants_files:
+        if not path.exists(vf):
+            continue
+        with open(vf, 'r', encoding='utf-8') as f:
+            for line in f:
+                line = line.split('#')[0].strip()
+                if '\t' not in line:
+                    continue
+                chars = line.split('\t')
+                
+                # Find which of these characters exist in the current font
+                target_glyph = None
+                for c in chars:
+                    cp_str = str(ord(c))
+                    if cp_str in obj['cmap']:
+                        target_glyph = obj['cmap'][cp_str]
+                        break
+                
+                # If we found a glyph, map all other characters in the variant group to it
+                if target_glyph:
+                    for c in chars:
+                        cp_str = str(ord(c))
+                        if cp_str not in obj['cmap']:
+                            obj['cmap'][cp_str] = target_glyph
+                            if target_glyph not in obj['cmap_rev']:
+                                obj['cmap_rev'][target_glyph] = []
+                            obj['cmap_rev'][target_glyph].append(cp_str)
 
 def disassociate_codepoint_and_glyph_name(obj, codepoint, glyph_name):
     del obj['cmap'][codepoint]
@@ -646,6 +666,10 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
         config = 'twp'
         
     font = load_font(input_file, ttc_index=ttc_index)
+    
+    # 1. Apply variants early to maximize character availability
+    apply_variants(font, config=config)
+    
     fallback_font_obj = None
     merged_fallback_cps = set()
     if fallback_font:
@@ -656,6 +680,7 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
 
     codepoints_font = build_codepoints_font(font)
 
+    # 2. Proactive fallback filling
     fill_codepoints = build_fill_codepoints(fill_charset)
     if fallback_font_obj and fill_codepoints:
         missing_cps = sorted(cp for cp in fill_codepoints if cp not in codepoints_font and str(cp) in fallback_font_obj['cmap'])
@@ -671,11 +696,11 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
             merged_fallback_cps |= merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
             codepoints_font = build_codepoints_font(font)
     
-    # Identify what characters are missing and see if they are in fallback
-    entries_char_all = build_opencc_char_table(codepoints_font, config=config, fallback_font_obj=fallback_font_obj)
-    entries_word_all = build_opencc_word_table(codepoints_font, config=config, fallback_font_obj=fallback_font_obj)
+    # 3. Build conversion tables (Permissive - all potential conversions)
+    entries_char_all = build_opencc_char_table(config=config)
+    entries_word_all = build_opencc_word_table(config=config)
 
-    # If we have fallback font, perform merging for missing characters
+    # 4. Perform merging for missing characters needed for conversion
     if fallback_font_obj and merge_mode != 'universal':
         needed_cps = set()
         for k, v in entries_char_all: needed_cps.add(v)
@@ -684,57 +709,94 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
         
         missing_cps = [cp for cp in needed_cps if cp not in codepoints_font]
         if missing_cps:
-            print(f"Merging {len(missing_cps)} glyphs from fallback font...")
+            print(f"Merging {len(missing_cps)} glyphs from fallback font for conversion targets...")
             merged_fallback_cps |= merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
-            # Re-update codepoints_font after merging
             codepoints_font = build_codepoints_font(font)
 
-    # Re-calculate entries after potential fallback merge to ensure codepoint_to_glyph_name works
-    entries_char = build_opencc_char_table(codepoints_font, config=config)
-    entries_word = build_opencc_word_table(codepoints_font, config=config)
+    # 5. Filter tables to what's actually possible
+    # A conversion is possible if:
+    #   - For single char: target 'v' exists in font (or was merged)
+    #   - For words: all targets 'vs' exist in font (or were merged)
+    
+    final_entries_char = []
+    for k, v in entries_char_all:
+        if v in codepoints_font:
+            final_entries_char.append((k, v))
+            
+    final_entries_word = []
+    for ks, vs in entries_word_all:
+        if all(v in codepoints_font for v in vs):
+            final_entries_word.append((ks, vs))
 
     if no_punc:
         codepoints_non_han = build_codepoints_non_han()
-        entries_char = [(k, v) for k, v in entries_char if k not in codepoints_non_han]
-        entries_word = [(ks, vs) for ks, vs in entries_word if not any(k in codepoints_non_han for k in ks)]
+        final_entries_char = [(k, v) for k, v in final_entries_char if k not in codepoints_non_han]
+        final_entries_word = [(ks, vs) for ks, vs in final_entries_word if not any(k in codepoints_non_han for k in ks)]
 
     if force_vertical:
         apply_force_vertical(font)
-
-    if merge_mode == 'universal':
-        codepoints_final = codepoints_font
-    else:
-        codepoints_final = ((build_codepoints_non_han() | build_codepoints_han()) & codepoints_font) | merged_fallback_cps
-        remove_codepoints(font, codepoints_font - codepoints_final)
-        clean_unused_glyphs(font)
-
-    available_glyph_count = MAX_GLYPH_COUNT - get_glyph_count(font)
-    assert available_glyph_count >= len(entries_word)
 
     word2pseu_table = []
     char2char_table = []
     pseu2word_table = []
 
-    for i, (codepoints_k, codepoints_v) in enumerate(entries_word):
+    # 6. Apply single-character conversions via cmap filling (Kindle friendly)
+    # AND optionally via GSUB (for apps that support it better than cmap)
+    for codepoint_k, codepoint_v in final_entries_char:
+        glyph_name_v = codepoint_to_glyph_name(font, codepoint_v)
+        if not glyph_name_v: continue
+        
+        cp_k_str = str(codepoint_k)
+        if cp_k_str not in font['cmap']:
+            # Directly map in cmap if source codepoint is missing
+            font['cmap'][cp_k_str] = glyph_name_v
+            if glyph_name_v not in font['cmap_rev']:
+                font['cmap_rev'][glyph_name_v] = []
+            font['cmap_rev'][glyph_name_v].append(cp_k_str)
+        else:
+            # Source exists, add GSUB single substitution
+            glyph_name_k = codepoint_to_glyph_name(font, codepoint_k)
+            if glyph_name_k != glyph_name_v:
+                char2char_table.append((glyph_name_k, glyph_name_v))
+
+    # 7. Finalize subsetting or cleanup
+    if merge_mode == 'universal':
+        # In universal mode, we preserve everything from source + merged
+        pass
+    else:
+        # subsetting mode: only keep needed characters to stay under glyph limit
+        codepoints_final = ((build_codepoints_non_han() | build_codepoints_han()) & build_codepoints_font(font)) | merged_fallback_cps
+        remove_codepoints(font, build_codepoints_font(font) - codepoints_final)
+        clean_unused_glyphs(font)
+
+    available_glyph_count = MAX_GLYPH_COUNT - get_glyph_count(font)
+    assert available_glyph_count >= len(final_entries_word), f"Glyph limit exceeded: {get_glyph_count(font)} + {len(final_entries_word)} > 65535. Try using a smaller fallback font or more aggressive subsetting."
+
+    word2pseu_table = []
+    pseu2word_table = []
+
+    # 8. Apply word/phrase conversions via GSUB ligatures
+    for i, (codepoints_k, codepoints_v) in enumerate(final_entries_word):
         pseudo_glyph_name = 'pseu%X' % i
         glyph_names_k = [codepoint_to_glyph_name(font, codepoint) for codepoint in codepoints_k]
         glyph_names_v = [codepoint_to_glyph_name(font, codepoint) for codepoint in codepoints_v]
+        
+        # Skip if any glyph name is missing (should not happen with our filtering)
+        if None in glyph_names_k or None in glyph_names_v: continue
+        
         insert_empty_glyph(font, pseudo_glyph_name)
         word2pseu_table.append((glyph_names_k, pseudo_glyph_name))
         pseu2word_table.append((pseudo_glyph_name, glyph_names_v))
 
-    for codepoint_k, codepoint_v in entries_char:
-        glyph_name_k = codepoint_to_glyph_name(font, codepoint_k)
-        glyph_name_v = codepoint_to_glyph_name(font, codepoint_v)
-        char2char_table.append((glyph_name_k, glyph_name_v))
-
-    # Kindle and other limited renderers are more likely to honor standard
-    # OpenType feature tags than custom tags like "liga_s2t".
+    # Kindle-compatible tags
     feature_names = ['liga', 'rlig', 'ccmp']
     insert_empty_features(font, feature_names)
-    create_word2pseu_table(font, feature_names, word2pseu_table)
-    create_char2char_table(font, feature_names, char2char_table)
-    create_pseu2word_table(font, feature_names, pseu2word_table)
+    if word2pseu_table:
+        create_word2pseu_table(font, feature_names, word2pseu_table)
+    if char2char_table:
+        create_char2char_table(font, feature_names, char2char_table)
+    if pseu2word_table:
+        create_pseu2word_table(font, feature_names, pseu2word_table)
 
     modify_metadata(font, name_header_file, font_version, font_name=font_name, kobo_mode=kobo_mode)
     save_font(font, output_file, output_woff2=output_woff2)
