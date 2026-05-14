@@ -736,41 +736,26 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
     if force_vertical:
         apply_force_vertical(font)
 
-    word2pseu_table = []
-    char2char_table = []
-    pseu2word_table = []
-
     # 6. Apply single-character conversions via cmap filling (Kindle friendly)
-    # AND optionally via GSUB (for apps that support it better than cmap)
     for codepoint_k, codepoint_v in final_entries_char:
         glyph_name_v = codepoint_to_glyph_name(font, codepoint_v)
         if not glyph_name_v: continue
         
         cp_k_str = str(codepoint_k)
         if cp_k_str not in font['cmap']:
-            # Directly map in cmap if source codepoint is missing
             font['cmap'][cp_k_str] = glyph_name_v
             if glyph_name_v not in font['cmap_rev']:
                 font['cmap_rev'][glyph_name_v] = []
             font['cmap_rev'][glyph_name_v].append(cp_k_str)
         else:
-            # Source exists, add GSUB single substitution
             glyph_name_k = codepoint_to_glyph_name(font, codepoint_k)
             if glyph_name_k != glyph_name_v:
                 char2char_table.append((glyph_name_k, glyph_name_v))
 
-    # 7. Finalize subsetting or cleanup
-    if merge_mode == 'universal':
-        # In universal mode, we preserve everything from source + merged
-        pass
-    else:
-        # subsetting mode: only keep needed characters to stay under glyph limit
-        codepoints_final = ((build_codepoints_non_han() | build_codepoints_han()) & build_codepoints_font(font)) | merged_fallback_cps
-        remove_codepoints(font, build_codepoints_font(font) - codepoints_final)
-        clean_unused_glyphs(font)
-
-    available_glyph_count = MAX_GLYPH_COUNT - get_glyph_count(font)
-    assert available_glyph_count >= len(final_entries_word), f"Glyph limit exceeded: {get_glyph_count(font)} + {len(final_entries_word)} > 65535. Try using a smaller fallback font or more aggressive subsetting."
+    # 7. Safety Check (No cleanup, no subsetting)
+    current_glyph_count = get_glyph_count(font)
+    needed_word_glyphs = len(final_entries_word)
+    assert (current_glyph_count + needed_word_glyphs) <= MAX_GLYPH_COUNT, f"Glyph limit exceeded: {current_glyph_count} + {needed_word_glyphs} > 65535. Too many phrases or fallback characters."
 
     word2pseu_table = []
     pseu2word_table = []
