@@ -737,6 +737,7 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
         apply_force_vertical(font)
 
     # 6. Apply single-character conversions via cmap filling (Kindle friendly)
+    char2char_table = []
     for codepoint_k, codepoint_v in final_entries_char:
         glyph_name_v = codepoint_to_glyph_name(font, codepoint_v)
         if not glyph_name_v: continue

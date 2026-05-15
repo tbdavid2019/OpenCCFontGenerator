@@ -6,6 +6,29 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ## [Unreleased]
 
+### Fixed
+
+#### OpenCC Fallback Path Crash: `char2char_table` 未初始化
+- 修復在 `fallback_font + fill_charset + opencc merge` 路徑下，若單字轉換需要建立 GSUB `char2char` 替換表時，程式會因 `char2char_table` 未先初始化而直接拋出 `NameError`。
+- 現在會在單字轉換流程開始前建立 `char2char_table`，讓已存在來源碼位、但仍需改寫為目標 glyph 的情況可以正常累積替換規則。
+- 已用互動式精靈 `start.py` 依實際參數重跑驗證，原本的 `name 'char2char_table' is not defined` 已消失，並成功輸出 `.ttf` 與 `.woff2`。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`
+
+#### Kindle & E-Reader Critical Fix: "Missing Source Character" Conversion Bug
+- **重大修正**：修復了原本「來源字不在字型中則不轉換」的錯誤邏輯。
+- **問題背景**：原本程式會檢查簡體字（來源）是否在字型中，若字型是純繁體字型（如 `jf金萱`），其 `cmap` 根本沒有簡體編碼，導致程式跳過轉換規則。在 Kindle 上顯示時，簡體字會因缺字而回退到系統字型，造成轉換失敗的假象。
+- **解決方案**：
+    - 改為**直接修改 `cmap`**：只要目標繁體字存在於字型中，就強行將簡體編碼指向該繁體字形。這不依賴 GSUB，相容性最高。
+    - **放寬轉換條件**：轉換規則的建立不再受限於來源字是否存在於字型中。
+- **影響**：大幅提升在 Kindle、Kobo 等電子書設備上的繁簡轉換覆蓋率。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`
+
+#### 變體與異體字自動補全 (Variant Supplementing)
+- 引進類似 `TCFontCreator` 的異體字回退機制。
+- 新增 `Variants.txt`, `Var_tw.txt`, `Var_hk.txt`, `Var_cl.txt` 等字典。
+- 運作原理：如果字型缺少某個編碼（如「妳」），但有其對應變體（如「你」），程式會自動將「妳」的編碼指向「你」的字形，避免缺字。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`, `src/OpenCCFontGenerator/opencc_data/*.txt`
+
 ### Added
 
 #### `--kobo` — Kobo eReader 相容模式
