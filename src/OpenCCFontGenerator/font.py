@@ -1,4 +1,5 @@
 from collections import defaultdict
+import base64
 import copy
 from datetime import date
 from itertools import chain, groupby
@@ -439,6 +440,23 @@ def build_zh_tw_family_name(font_name):
         return re.sub(r'(^| )TC($| )', lambda m: f"{m.group(1)}繁中{m.group(2)}", font_name).strip()
     return f"{font_name} 繁中"
 
+def build_ascii_family_name(font_name):
+    ascii_name = re.sub(r'[^A-Za-z0-9 -]', '', font_name).strip()
+    return ascii_name or "OpenCC TC"
+
+def build_ascii_postscript_name(font_name):
+    ascii_name = re.sub(r'[^A-Za-z0-9-]', '', font_name.replace(" ", ""))
+    return ascii_name or "TC"
+
+def encode_legacy_name_string(name_string):
+    return base64.b64encode(name_string.encode('ascii')).decode('ascii')
+
+def decode_legacy_name_string(name_string):
+    try:
+        return base64.b64decode(name_string).decode('ascii')
+    except Exception:
+        return name_string
+
 def ensure_zh_tw_name_records(obj, fallback_family_name=None):
     family_candidates = get_name_record_strings(obj, (16,), 1028) or \
                         get_name_record_strings(obj, (16,), 1033) or \
@@ -450,15 +468,33 @@ def ensure_zh_tw_name_records(obj, fallback_family_name=None):
                        get_name_record_strings(obj, (2,), 1028) or \
                        get_name_record_strings(obj, (2,), 1033) or \
                        get_name_record_strings(obj, (17, 2))
+    version_candidates = get_name_record_strings(obj, (5,), 1028) or \
+                         get_name_record_strings(obj, (5,), 1033) or \
+                         get_name_record_strings(obj, (5,), 2052) or \
+                         get_name_record_strings(obj, (5,))
+    postscript_candidates = get_name_record_strings(obj, (6,), 1028) or \
+                            get_name_record_strings(obj, (6,), 1033) or \
+                            get_name_record_strings(obj, (6,), 2052) or \
+                            get_name_record_strings(obj, (6,))
+    unique_candidates = get_name_record_strings(obj, (3,), 1028) or \
+                        get_name_record_strings(obj, (3,), 1033) or \
+                        get_name_record_strings(obj, (3,), 2052) or \
+                        get_name_record_strings(obj, (3,))
 
     family_name = family_candidates[0] if family_candidates else (fallback_family_name or "OpenCC 繁中")
     style_name = style_candidates[0] if style_candidates else "Regular"
     family_name_zh_tw = build_zh_tw_family_name(family_name)
     full_name_zh_tw = family_name_zh_tw if style_name == "Regular" else f"{family_name_zh_tw} {style_name}"
+    version_name = version_candidates[0] if version_candidates else "Version 1.000"
+    postscript_name = postscript_candidates[0] if postscript_candidates else build_ascii_postscript_name(family_name)
+    unique_name = unique_candidates[0] if unique_candidates else f"1.000;OpenCC;{family_name_zh_tw};{date.today().year}"
 
     upsert_name_record(obj, 1, family_name_zh_tw, language_id=1028)
     upsert_name_record(obj, 2, style_name, language_id=1028)
+    upsert_name_record(obj, 3, unique_name, language_id=1028)
     upsert_name_record(obj, 4, full_name_zh_tw, language_id=1028)
+    upsert_name_record(obj, 5, version_name, language_id=1028)
+    upsert_name_record(obj, 6, postscript_name, language_id=1028)
     if get_name_record_strings(obj, (16,)):
         upsert_name_record(obj, 16, family_name_zh_tw, language_id=1028)
     if get_name_record_strings(obj, (17,)):
@@ -477,23 +513,51 @@ def modify_metadata(obj, name_header_file=None, font_version=None, font_name=Non
     else:
         original_families = list(set(item['nameString'] for item in obj['name'] if item['nameID'] in (1, 16)))
         original_families.sort(key=len, reverse=True)
+        original_postscript_names = []
+        for item in obj['name']:
+            if item.get('nameID') != 6:
+                continue
+            value = item.get('nameString', '')
+            if item.get('platformID') == 1 and item.get('encodingID', item.get('platEncID')) != 0:
+                value = decode_legacy_name_string(value)
+            original_postscript_names.append(value)
+        original_postscript_names = list(set(original_postscript_names))
         if not font_name:
             font_name = f"{original_families[0]} TC" if original_families else "OpenCC TC"
+        ascii_font_name = build_ascii_family_name(font_name)
+        safe_font_name_ps = build_ascii_postscript_name(font_name)
         for item in obj['name']:
+            platform_id = item.get('platformID')
+            encoding_id = item.get('encodingID', item.get('platEncID'))
+            name_id = item.get('nameID')
+            if platform_id == 1 and encoding_id != 0:
+                if name_id in (1, 4, 16):
+                    item['nameString'] = encode_legacy_name_string(ascii_font_name)
+                    continue
+                if name_id == 3:
+                    unique_id = decode_legacy_name_string(item.get('nameString', ''))
+                    for original_ps_name in original_postscript_names:
+                        if original_ps_name and original_ps_name in unique_id:
+                            unique_id = unique_id.replace(original_ps_name, safe_font_name_ps)
+                    item['nameString'] = encode_legacy_name_string(unique_id)
+                    continue
+                if name_id == 6:
+                    item['nameString'] = encode_legacy_name_string(safe_font_name_ps)
+                    continue
             for orig_fam in original_families:
                 orig_fam_ps = orig_fam.replace(" ", "")
-                font_name_ps = font_name.replace(" ", "")
-                safe_font_name_ps = re.sub(r'[^A-Za-z0-9-]', '', font_name_ps)
-                if not safe_font_name_ps:
-                    safe_font_name_ps = "TC"
                 if item['nameID'] in (1, 3, 4, 16):
                     if orig_fam in item['nameString']:
-                        item['nameString'] = item['nameString'].replace(orig_fam, font_name)
+                        replacement_name = font_name
+                        if item.get('platformID') == 1:
+                            replacement_name = ascii_font_name
+                        item['nameString'] = item['nameString'].replace(orig_fam, replacement_name)
                 elif item['nameID'] == 6:
+                    replacement_ps_name = safe_font_name_ps if item.get('platformID') == 1 else safe_font_name_ps
                     if orig_fam_ps in item['nameString']:
-                        item['nameString'] = item['nameString'].replace(orig_fam_ps, safe_font_name_ps)
+                        item['nameString'] = item['nameString'].replace(orig_fam_ps, replacement_ps_name)
                     elif orig_fam in item['nameString']:
-                        item['nameString'] = item['nameString'].replace(orig_fam, safe_font_name_ps).replace(" ", "-")
+                        item['nameString'] = item['nameString'].replace(orig_fam, replacement_ps_name).replace(" ", "-")
         if not kobo_mode:
             ensure_zh_tw_name_records(obj, fallback_family_name=font_name)
     if name_header_file and str(name_header_file).endswith('.json'):

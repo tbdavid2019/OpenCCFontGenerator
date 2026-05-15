@@ -8,6 +8,15 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ### Fixed
 
+#### Font Book `name` 表架構警告與亂碼名稱
+- 修復輸出字型在 macOS 字體簿中出現金嘆號、`[name 表架構]` 警告，以及名稱顯示亂碼的問題。
+- 調整 metadata 寫入策略：
+  - `platform 1` 的 legacy name records 改為使用 ASCII-safe 名稱，避免中文名稱落入不相容的 Macintosh name encoding。
+  - `platform 1 / encoding 25` 的 `nameID 1/3/4/6` 現在會以正確的 legacy bytes 格式重寫，不再留下空值或舊 PostScript 名稱。
+  - 補齊 `Windows zh-TW (languageID 1028)` 的 `nameID 3/5/6`，讓繁中語系的 name record 結構完整一致。
+- 已以 Font Book 直接開啟重建後的字型驗證，警告已消失。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`
+
 #### OpenCC Fallback Path Crash: `char2char_table` 未初始化
 - 修復在 `fallback_font + fill_charset + opencc merge` 路徑下，若單字轉換需要建立 GSUB `char2char` 替換表時，程式會因 `char2char_table` 未先初始化而直接拋出 `NameError`。
 - 現在會在單字轉換流程開始前建立 `char2char_table`，讓已存在來源碼位、但仍需改寫為目標 glyph 的情況可以正常累積替換規則。
