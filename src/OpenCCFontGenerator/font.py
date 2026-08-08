@@ -8,6 +8,7 @@ import os
 from os import path
 import subprocess
 import re
+import stat
 import tempfile
 
 try:
@@ -41,6 +42,17 @@ def grouper2(iterable, n=SUBTABLE_MAX_COUNT, key=None):
 # An opentype font can hold at most 65535 glyphs.
 MAX_GLYPH_COUNT = 65535
 
+# otfccbuild can copy Top DICT values into each CID FontDict. fontTools ignores
+# these entries while compiling, so remove them explicitly before recompiling.
+CFF_INVALID_FONTDICT_KEYS = (
+    'FontBBox',
+    'ItalicAngle',
+    'StrokeWidth',
+    'UnderlinePosition',
+    'UnderlineThickness',
+    'isFixedPitch',
+)
+
 def build_cmap_rev(obj):
     cmap_rev = defaultdict(list)
     for codepoint, glyph_name in obj['cmap'].items():
@@ -57,9 +69,98 @@ def get_lookup_values(obj, table_name):
         return ()
     return lookups.values()
 
+def is_cff_font(input_path, ttc_index=None):
+    '''Return whether a font uses CFF outlines.'''
+    if TTFont is None:
+        return False
+    font_number = -1 if ttc_index is None else ttc_index
+    font = TTFont(input_path, fontNumber=font_number, lazy=True)
+    try:
+        return 'CFF ' in font
+    finally:
+        font.close()
+
+def normalize_otf_for_otfcc(input_path, ttc_index=None):
+    '''
+    Make a browser-safe CFF copy before passing it through otfcc.
+
+    otfccbuild 0.10.4 can merge adjacent stem hint operators and create a
+    Type 2 CharString whose operand stack exceeds the CFF1 limit of 48.
+    Chromium/Firefox OTS rejects the entire font in that case. Removing CFF
+    hints before otfcc preserves outlines and layout tables while avoiding
+    the invalid rewrite.
+    '''
+    if TTFont is None:
+        raise ImportError("fonttools is required to normalize CFF fonts")
+    fd, normalized_path = tempfile.mkstemp(suffix='.otf')
+    os.close(fd)
+    try:
+        font_number = -1 if ttc_index is None else ttc_index
+        font = TTFont(input_path, fontNumber=font_number, lazy=False)
+        try:
+            cff = font['CFF '].cff
+            cff.desubroutinize()
+            cff.remove_hints()
+            font.save(normalized_path)
+        finally:
+            font.close()
+    except Exception:
+        if os.path.exists(normalized_path):
+            os.remove(normalized_path)
+        raise
+    return normalized_path
+
+def validate_font_output(output_path):
+    '''Fully load and compile every generated OpenType table.'''
+    if TTFont is None:
+        return
+    font = TTFont(output_path, lazy=False, checkChecksums=2)
+    try:
+        for table_tag in font.keys():
+            if table_tag != 'GlyphOrder':
+                font.getTableData(table_tag)
+        if 'name' in font:
+            for record in font['name'].names:
+                record.toUnicode()
+    finally:
+        font.close()
+
+def normalize_generated_font(output_path):
+    '''Recompile generated CFF data to drop invalid otfcc FontDict entries.'''
+    if TTFont is None:
+        return
+    font = TTFont(output_path, lazy=False, checkChecksums=2)
+    try:
+        if 'CFF ' not in font:
+            return
+        # Accessing the parsed CFF object marks the table for recompilation;
+        # otherwise TTFont.save() may copy the original binary table verbatim.
+        cff = font['CFF '].cff
+        for top_dict in cff.topDictIndex:
+            for font_dict in getattr(top_dict, 'FDArray', ()) or ():
+                raw_dict = getattr(font_dict, 'rawDict', None)
+                if raw_dict:
+                    for key in CFF_INVALID_FONTDICT_KEYS:
+                        raw_dict.pop(key, None)
+        output_dir = path.dirname(path.abspath(output_path))
+        suffix = path.splitext(output_path)[1] or '.otf'
+        output_mode = stat.S_IMODE(os.stat(output_path).st_mode)
+        fd, normalized_path = tempfile.mkstemp(dir=output_dir, suffix=suffix)
+        os.close(fd)
+        try:
+            font.save(normalized_path)
+            os.chmod(normalized_path, output_mode)
+            os.replace(normalized_path, output_path)
+        finally:
+            if os.path.exists(normalized_path):
+                os.remove(normalized_path)
+    finally:
+        font.close()
+
 def load_font(path, ttc_index=None):
     '''Load a font as a JSON object.'''
     temp_ttf = None
+    normalized_otf = None
     if path.lower().endswith('.woff2'):
         if TTFont is None:
             raise ImportError("Please install fonttools and brotli to support WOFF2: pip install fonttools brotli")
@@ -67,15 +168,27 @@ def load_font(path, ttc_index=None):
         font = TTFont(path)
         fd, temp_ttf = tempfile.mkstemp(suffix='.ttf')
         os.close(fd)
-        font.save(temp_ttf)
+        try:
+            font.flavor = None
+            font.save(temp_ttf)
+        finally:
+            font.close()
         path = temp_ttf
 
-    ttc_index_args = () if ttc_index is None else ('--ttc-index', str(ttc_index))
     try:
+        if is_cff_font(path, ttc_index=ttc_index):
+            print(f"Normalizing CFF outlines for browser compatibility: {path}")
+            normalized_otf = normalize_otf_for_otfcc(path, ttc_index=ttc_index)
+            path = normalized_otf
+            ttc_index_args = ()
+        else:
+            ttc_index_args = () if ttc_index is None else ('--ttc-index', str(ttc_index))
         obj = json.loads(subprocess.check_output(
             ('otfccdump', path, *ttc_index_args)))
         obj['cmap_rev'] = build_cmap_rev(obj)
     finally:
+        if normalized_otf and os.path.exists(normalized_otf):
+            os.remove(normalized_otf)
         if temp_ttf and os.path.exists(temp_ttf):
             os.remove(temp_ttf)
             
@@ -91,14 +204,30 @@ def save_font(obj, output_path, output_woff2=False):
         if 'cmap_rev' in obj:
             del obj['cmap_rev']
             
-        f.write("Executing otfccbuild for TTF output...\n")
-        result = subprocess.run(('otfccbuild', '-o', output_path),
-                               input=json.dumps(obj), encoding='utf-8')
-        
-        if result.returncode == 0:
-            f.write(f"TTF output successful: {output_path}\n")
-        else:
-            f.write(f"ERROR: otfccbuild failed with return code {result.returncode}\n")
+        output_dir = path.dirname(path.abspath(output_path))
+        os.makedirs(output_dir, exist_ok=True)
+        suffix = path.splitext(output_path)[1] or '.otf'
+        output_mode = stat.S_IMODE(os.stat(output_path).st_mode) if os.path.exists(output_path) else 0o644
+        fd, built_path = tempfile.mkstemp(dir=output_dir, suffix=suffix)
+        os.close(fd)
+        os.remove(built_path)
+
+        f.write("Executing otfccbuild...\n")
+        try:
+            subprocess.run(
+                ('otfccbuild', '-o', built_path),
+                input=json.dumps(obj), encoding='utf-8', check=True)
+            normalize_generated_font(built_path)
+            validate_font_output(built_path)
+            os.chmod(built_path, output_mode)
+            os.replace(built_path, output_path)
+            f.write(f"OpenType output validated successfully: {output_path}\n")
+        except Exception as exc:
+            f.write(f"ERROR: Font build or validation failed: {exc}\n")
+            raise
+        finally:
+            if os.path.exists(built_path):
+                os.remove(built_path)
         
         if output_woff2:
             f.write("WOFF2 output requested. Checking for fonttools...\n")
@@ -820,7 +949,17 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
     # 7. Safety Check (No cleanup, no subsetting)
     current_glyph_count = get_glyph_count(font)
     needed_word_glyphs = len(final_entries_word)
-    assert (current_glyph_count + needed_word_glyphs) <= MAX_GLYPH_COUNT, f"Glyph limit exceeded: {current_glyph_count} + {needed_word_glyphs} > 65535. Too many phrases or fallback characters."
+    if (current_glyph_count + needed_word_glyphs) > MAX_GLYPH_COUNT:
+        message = (
+            f"Glyph limit exceeded: {current_glyph_count} + {needed_word_glyphs} > {MAX_GLYPH_COUNT}. "
+            "Too many phrase substitutions or fallback glyphs."
+        )
+        if merge_mode == 'universal':
+            message += (
+                " 當前使用 universal 補字模式時，來源字庫 + fallback 全量 codepoints + OpenCC 詞彙規則總量超過 OpenType glyph 上限。"
+                " 請改用 merge_mode='opencc'，或關閉/縮小 fill_charset。"
+            )
+        raise ValueError(message)
 
     word2pseu_table = []
     pseu2word_table = []

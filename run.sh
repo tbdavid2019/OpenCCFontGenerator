@@ -36,10 +36,10 @@ else
     # 環境已存在，直接啟動
     source "$VENV_PATH/bin/activate"
     
-    # [新加入] 確保重要依賴項存在（例如剛新增的 fonttools）
-    if ! python3 -c "import fontTools, brotli" &> /dev/null; then
-        echo "📦 偵測到缺少必要套件 (fonttools/brotli)，正在自動安裝..."
-        pip install fonttools brotli
+    # 確保 fontTools 版本具備 CFF dehint API，避免 otfcc 產生瀏覽器拒絕的 CharString。
+    if ! python3 -c "import brotli; from fontTools import cffLib; assert hasattr(cffLib.CFFFontSet, 'desubroutinize') and hasattr(cffLib.CFFFontSet, 'remove_hints')" &> /dev/null; then
+        echo "📦 偵測到缺少必要套件或 fontTools 版本過舊，正在更新..."
+        pip install --upgrade "fonttools>=4.62.1" brotli
     fi
 fi
 

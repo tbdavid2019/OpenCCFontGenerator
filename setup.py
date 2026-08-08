@@ -241,7 +241,11 @@ setup(
     },
     include_package_data=True,
     python_requires='>=3.8, <4',
-    install_requires=[],
+    install_requires=[
+        'opencc<1.2',
+        'fonttools>=4.62.1',
+        'brotli',
+    ],
     entry_points={},
     project_urls={
         'Bug Reports': 'https://github.com/ayaka14732/opencc-font-generator/issues',

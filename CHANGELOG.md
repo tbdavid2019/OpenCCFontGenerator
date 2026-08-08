@@ -8,6 +8,14 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ### Fixed
 
+#### CFF OTF browser rejection (`Invalid font data in ArrayBuffer`)
+- 修復 CFF-based OTF 經 `otfccbuild 0.10.4` 重建後，可能把相鄰 stem hint operators 合併，產生超過 CFF1 48-operand stack 上限的 Type 2 CharString。
+- 所有 CFF 字型現在都會在送入 `otfccdump` 前先以 fontTools desubroutinize 並移除 hints，避免 Chromium／Firefox OTS 拒絕整份字型。
+- `otfccbuild` 現在使用暫存檔原子建置，失敗時會拋出錯誤，不會留下或誤用舊輸出。
+- 產物會重新編譯 CFF、移除 otfcc 寫入的非標準 FontDict 欄位，並完整載入所有 OpenType tables 驗證後才取代目標檔案。
+- 新增 CFF 正規化、輸出驗證、權限保留與失敗不覆寫的單元測試。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`, `tests/test_font_io.py`, `requirements.txt`, `setup.py`, `run.sh`
+
 #### Font Book `name` 表架構警告與亂碼名稱
 - 修復輸出字型在 macOS 字體簿中出現金嘆號、`[name 表架構]` 警告，以及名稱顯示亂碼的問題。
 - 調整 metadata 寫入策略：
