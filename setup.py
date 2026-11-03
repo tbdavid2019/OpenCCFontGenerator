@@ -242,7 +242,7 @@ setup(
     include_package_data=True,
     python_requires='>=3.8, <4',
     install_requires=[
-        'opencc<1.2',
+        'opencc>=1.2.0',
         'fonttools>=4.62.1',
         'brotli',
     ],
