@@ -999,9 +999,50 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
             if glyph_name_k != glyph_name_v:
                 char2char_table.append((glyph_name_k, glyph_name_v))
 
-    # 7. Safety Check (No cleanup, no subsetting)
+    # 7. Auto-subset only when full font + OpenCC words would exceed OpenType 65,535 limit
     current_glyph_count = get_glyph_count(font)
     needed_word_glyphs = len(final_entries_word)
+    if merge_mode != 'universal' and (current_glyph_count + needed_word_glyphs) > MAX_GLYPH_COUNT:
+        opencc_required_cps = set()
+        for k, v in final_entries_char:
+            opencc_required_cps.add(k)
+            opencc_required_cps.add(v)
+        for ks, vs in final_entries_word:
+            opencc_required_cps.update(ks)
+            opencc_required_cps.update(vs)
+        print(
+            f"Glyph count + OpenCC words ({current_glyph_count} + {needed_word_glyphs} > {MAX_GLYPH_COUNT}); "
+            "subsetting unused glyphs outside OpenCC/Han/non-Han sets..."
+        )
+        codepoints_font_now = build_codepoints_font(font)
+        codepoints_final = (
+            ((build_codepoints_non_han() | build_codepoints_han() | opencc_required_cps) & codepoints_font_now)
+            | merged_fallback_cps
+        )
+        remove_codepoints(font, codepoints_font_now - codepoints_final)
+        clean_unused_glyphs(font)
+        current_glyph_count = get_glyph_count(font)
+
+    word2pseu_table = []
+    pseu2word_table = []
+    seen_word_glyphs = set()
+    word_substitutions = []
+
+    for codepoints_k, codepoints_v in final_entries_word:
+        glyph_names_k = [codepoint_to_glyph_name(font, codepoint) for codepoint in codepoints_k]
+        glyph_names_v = [codepoint_to_glyph_name(font, codepoint) for codepoint in codepoints_v]
+
+        # Skip if any glyph name is missing
+        if None in glyph_names_k or None in glyph_names_v:
+            continue
+
+        glyph_key = tuple(glyph_names_k)
+        if glyph_key in seen_word_glyphs:
+            continue
+        seen_word_glyphs.add(glyph_key)
+        word_substitutions.append((glyph_names_k, glyph_names_v))
+
+    needed_word_glyphs = len(word_substitutions)
     if (current_glyph_count + needed_word_glyphs) > MAX_GLYPH_COUNT:
         message = (
             f"Glyph limit exceeded: {current_glyph_count} + {needed_word_glyphs} > {MAX_GLYPH_COUNT}. "
@@ -1014,23 +1055,8 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
             )
         raise ValueError(message)
 
-    word2pseu_table = []
-    pseu2word_table = []
-    seen_word_glyphs = set()
-
     # 8. Apply word/phrase conversions via GSUB ligatures
-    for codepoints_k, codepoints_v in final_entries_word:
-        glyph_names_k = [codepoint_to_glyph_name(font, codepoint) for codepoint in codepoints_k]
-        glyph_names_v = [codepoint_to_glyph_name(font, codepoint) for codepoint in codepoints_v]
-        
-        # Skip if any glyph name is missing (should not happen with our filtering)
-        if None in glyph_names_k or None in glyph_names_v: continue
-
-        glyph_key = tuple(glyph_names_k)
-        if glyph_key in seen_word_glyphs:
-            continue
-        seen_word_glyphs.add(glyph_key)
-
+    for glyph_names_k, glyph_names_v in word_substitutions:
         pseudo_glyph_name = 'pseu%X' % len(word2pseu_table)
         insert_empty_glyph(font, pseudo_glyph_name)
         word2pseu_table.append((glyph_names_k, pseudo_glyph_name))

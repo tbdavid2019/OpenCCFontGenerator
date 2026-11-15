@@ -40,6 +40,9 @@ All notable changes to OpenCC Font Generator will be documented here.
   - 在 `apply_variants()` 中隔離同簡對多繁的易混字形（例如不讓 `發`／`発` 與 `髮`／`髪` 彼此交叉回退），避免缺字時把「發現」誤顯為「髮現」或把「頭髮」誤顯為「頭發」。
   - 修正 `apply_variants()` 解析 `Var_hk.txt` 中含空白字元的項目時拋出 `TypeError` 的問題，並在 `t2s` 模式下略過繁體異體字預填，避免干擾繁轉簡規則。
 - **去除 `word2pseu` 重複來源字形序列**：避免 `cmap` 補齊簡體碼位後產生重複的 `from` glyph sequence，節省 pseudo glyph 名額並確保編譯結果穩定。
+- **OpenType `65,535` Glyph 上限自動保護（Large CJK 字型相容）**：
+  - 在 `src/OpenCCFontGenerator/font.py` 的 `build_font()` 中，於 `merge_mode != 'universal'` 且 `glyph_count + len(final_entries_word) > 65535` 時自動裁剪不在 OpenCC 所需字集、常用漢字符與非漢字範圍內的冗餘字形（如 `LXGWWenKai`、`TaiwanPearl`、`NaikaiFont` 等 44k–50k glyphs 的大型字庫），同時保持中小字庫 100% 原字形不變；並同步更新 `README.md` 重要限制說明。
+  - 新增單元測試驗證超過上限時自動 subset 且保留所有 OpenCC GSUB 詞彙字形。
 - **驗證**：已對 `Iansui-Regular.ttf` 與 `[origin]/jf金萱那提2.0半糖.otf` 實測重建並以 CoreText 驗證（`业余`/`業余`→`業餘`、`后来`→`後來`、`皇后`→`皇后`、`发现`→`發現`、`头发`→`頭髮`、`多余`→`多餘`），並通過單元測試。
 - **Files changed**: `src/OpenCCFontGenerator/font.py`, `tests/test_font_io.py`, `CHANGELOG.md`
 

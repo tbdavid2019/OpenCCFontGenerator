@@ -305,6 +305,51 @@ class OpenCCGsubAndVariantTests(unittest.TestCase):
         ])
         self.assertEqual(out['GSUB']['lookups']['pseu2word']['subtables'][0]['pseu0'], ['g_hou_t_fb', 'g_lai_t_fb'])
 
+    def test_build_font_auto_subsets_only_when_exceeding_max_glyph_count(self):
+        # Extra CJK Extension B glyph outside OpenCC Han/non-Han cache pushes total > MAX_GLYPH_COUNT=5
+        ext_b_cp = 0x20000
+        font_obj = {
+            'cmap': {
+                str(ord('后')): 'g_hou_s',
+                str(ord('来')): 'g_lai_s',
+                str(ord('後')): 'g_hou_t',
+                str(ord('來')): 'g_lai_t',
+                str(ext_b_cp): 'g_ext_b',
+            },
+            'cmap_rev': {
+                'g_hou_s': [str(ord('后'))],
+                'g_lai_s': [str(ord('来'))],
+                'g_hou_t': [str(ord('後'))],
+                'g_lai_t': [str(ord('來'))],
+                'g_ext_b': [str(ext_b_cp)],
+            },
+            'glyf': {
+                '.notdef': {},
+                'g_hou_s': {'contours': []},
+                'g_lai_s': {'contours': []},
+                'g_hou_t': {'contours': []},
+                'g_lai_t': {'contours': []},
+                'g_ext_b': {'contours': []},
+            },
+            'glyph_order': ['.notdef', 'g_hou_s', 'g_lai_s', 'g_hou_t', 'g_lai_t', 'g_ext_b'],
+            'name': [{'platformID': 3, 'encodingID': 1, 'languageID': 1033, 'nameID': 1, 'nameString': 'BigCJK'}],
+            'head': {'fontRevision': 1.0},
+        }
+        saved_objs = []
+        with mock.patch.object(font_module, 'MAX_GLYPH_COUNT', 6), \
+             mock.patch.object(font_module, 'load_font', return_value=font_obj), \
+             mock.patch.object(font_module, 'save_font', side_effect=lambda obj, p, output_woff2=False: saved_objs.append(obj)), \
+             mock.patch.object(font_module, 'build_opencc_char_table', return_value=[(ord('后'), ord('後')), (ord('来'), ord('來'))]), \
+             mock.patch.object(font_module, 'build_opencc_word_table', return_value=[((ord('后'), ord('来')), (ord('後'), ord('來')))]):
+            font_module.build_font('big.ttf', 'out.ttf', config='s2tw')
+
+        out = saved_objs[0]
+        # Unused Ext-B glyph removed cleanly, OpenCC glyphs + pseu0 retained within limit 6
+        self.assertNotIn(str(ext_b_cp), out['cmap'])
+        self.assertNotIn('g_ext_b', out['glyf'])
+        self.assertLessEqual(len(out['glyph_order']), 6)
+        self.assertIn('pseu0', out['glyf'])
+
 
 if __name__ == '__main__':
     unittest.main()
