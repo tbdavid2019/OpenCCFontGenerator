@@ -352,12 +352,15 @@ def apply_variants(obj, config='s2t'):
     Apply variant mappings (heteronyms/variants) to the font's cmap.
     This helps fill gaps where a font might have one form of a character but not another.
     '''
+    if config == 't2s':
+        return
+
     variants_files = [path.join(HERE, 'opencc_data/Variants.txt')]
     if config in ('twp', 's2tw'):
         variants_files.append(path.join(HERE, 'opencc_data/Var_tw.txt'))
     elif config == 's2hk':
         variants_files.append(path.join(HERE, 'opencc_data/Var_hk.txt'))
-    
+
     for vf in variants_files:
         if not path.exists(vf):
             continue
@@ -366,8 +369,16 @@ def apply_variants(obj, config='s2t'):
                 line = line.split('#')[0].strip()
                 if '\t' not in line:
                     continue
-                chars = line.split('\t')
-                
+                chars = [c for c in re.split(r'\s+', line) if len(c) == 1]
+                if len(chars) < 2:
+                    continue
+
+                # Avoid cross-mapping distinct Traditional homographs 發/発 and 髮/髪.
+                if any(c in ('發', '発') for c in chars) and any(c in ('髮', '髪') for c in chars):
+                    chars = [c for c in chars if c not in ('髮', '髪')]
+                    if len(chars) < 2:
+                        continue
+
                 # Find which of these characters exist in the current font
                 target_glyph = None
                 for c in chars:
@@ -375,7 +386,7 @@ def apply_variants(obj, config='s2t'):
                     if cp_str in obj['cmap']:
                         target_glyph = obj['cmap'][cp_str]
                         break
-                
+
                 # If we found a glyph, map all other characters in the variant group to it
                 if target_glyph:
                     for c in chars:
@@ -491,56 +502,97 @@ def clean_unused_glyphs(obj):
         remove_associated_codepoints_of_glyph(obj, glyph_name)
         remove_glyph(obj, glyph_name)
 
-def insert_empty_feature(obj, feature_name):
-    if 'GSUB' not in obj:
+def get_gsub_feature_tag(feature_key):
+    '''Return the 4-character OpenType feature tag for an otfcc feature key.'''
+    return feature_key.split('_', 1)[0]
+
+def ensure_gsub_feature_targets(obj, feature_name):
+    '''
+    Ensure a single feature entry per tag exists in every GSUB language table
+    and return the unique list of feature keys that should receive lookups.
+    '''
+    if 'GSUB' not in obj or not isinstance(obj['GSUB'], dict):
         obj['GSUB'] = {'languages': {'DFLT_dflt': {'features': []}}, 'features': {}, 'lookups': {}, 'lookupOrder': []}
-    for table in obj['GSUB']['languages'].values():
-        if feature_name not in table['features']:
-            table['features'].append(feature_name)
-    if feature_name not in obj['GSUB']['features']:
-        obj['GSUB']['features'][feature_name] = []
+    gsub = obj['GSUB']
+    languages = gsub.setdefault('languages', {})
+    if not languages:
+        languages['DFLT_dflt'] = {'features': []}
+    features = gsub.setdefault('features', {})
+    gsub.setdefault('lookups', {})
+    gsub.setdefault('lookupOrder', [])
+
+    target_keys = []
+    seen_targets = set()
+    for lang_table in languages.values():
+        lang_features = lang_table.setdefault('features', [])
+        matching = [key for key in lang_features if get_gsub_feature_tag(key) == feature_name]
+        if not matching:
+            features.setdefault(feature_name, [])
+            lang_features.append(feature_name)
+            primary_key = feature_name
+        else:
+            primary_key = matching[0]
+            primary_lookups = features.setdefault(primary_key, [])
+            for dup_key in matching[1:]:
+                for lookup_name in features.get(dup_key, ()):
+                    if lookup_name not in primary_lookups:
+                        primary_lookups.append(lookup_name)
+            if len(matching) > 1:
+                dup_set = set(matching[1:])
+                lang_features[:] = [key for key in lang_features if key not in dup_set]
+        if primary_key not in seen_targets:
+            seen_targets.add(primary_key)
+            target_keys.append(primary_key)
+    return target_keys
+
+def insert_empty_feature(obj, feature_name):
+    ensure_gsub_feature_targets(obj, feature_name)
 
 def insert_empty_features(obj, feature_names):
     for feature_name in feature_names:
         insert_empty_feature(obj, feature_name)
 
+def _attach_gsub_lookup(obj, feature_names, lookup_name, lookup_def):
+    '''Attach a GSUB lookup to existing/created feature targets without duplicating feature tags.'''
+    for feature_name in feature_names:
+        for feature_key in ensure_gsub_feature_targets(obj, feature_name):
+            feature_lookups = obj['GSUB']['features'].setdefault(feature_key, [])
+            if lookup_name not in feature_lookups:
+                feature_lookups.append(lookup_name)
+    obj['GSUB']['lookups'][lookup_name] = lookup_def
+    lookup_order = obj['GSUB'].setdefault('lookupOrder', [])
+    if lookup_name in lookup_order:
+        lookup_order.remove(lookup_name)
+    lookup_order.append(lookup_name)
+
 def create_word2pseu_table(obj, feature_names, conversions):
     def conversion_item_len(conversion_item): return len(conversion_item[0])
     subtables = [{'substitutions': [{'from': glyph_names_k, 'to': pseudo_glyph_name} for glyph_names_k, pseudo_glyph_name in subtable]}
                  for subtable in grouper2(conversions, key=conversion_item_len)]
-    for feature_name in feature_names:
-        obj['GSUB']['features'][feature_name].append('word2pseu')
-    obj['GSUB']['lookups']['word2pseu'] = {
+    _attach_gsub_lookup(obj, feature_names, 'word2pseu', {
         'type': 'gsub_ligature',
         'flags': {},
         'subtables': subtables
-    }
-    obj['GSUB']['lookupOrder'].append('word2pseu')
+    })
 
 def create_char2char_table(obj, feature_names, conversions):
     subtables = [{k: v for k, v in subtable}
                  for subtable in grouper(conversions)]
-    for feature_name in feature_names:
-        obj['GSUB']['features'][feature_name].append('char2char')
-    obj['GSUB']['lookups']['char2char'] = {
+    _attach_gsub_lookup(obj, feature_names, 'char2char', {
         'type': 'gsub_single',
         'flags': {},
         'subtables': subtables
-    }
-    obj['GSUB']['lookupOrder'].append('char2char')
+    })
 
 def create_pseu2word_table(obj, feature_names, conversions):
     def conversion_item_len(conversion_item): return len(conversion_item[1])
     subtables = [{k: v for k, v in subtable}
                  for subtable in grouper2(conversions, key=conversion_item_len)]
-    for feature_name in feature_names:
-        obj['GSUB']['features'][feature_name].append('pseu2word')
-    obj['GSUB']['lookups']['pseu2word'] = {
+    _attach_gsub_lookup(obj, feature_names, 'pseu2word', {
         'type': 'gsub_multiple',
         'flags': {},
         'subtables': subtables
-    }
-    obj['GSUB']['lookupOrder'].append('pseu2word')
+    })
 
 def get_name_record_strings(obj, name_ids, language_id=None):
     values = []
@@ -860,9 +912,6 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
         
     font = load_font(input_file, ttc_index=ttc_index)
     
-    # 1. Apply variants early to maximize character availability
-    apply_variants(font, config=config)
-    
     fallback_font_obj = None
     merged_fallback_cps = set()
     if fallback_font:
@@ -873,7 +922,7 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
 
     codepoints_font = build_codepoints_font(font)
 
-    # 2. Proactive fallback filling
+    # 1. Proactive fallback filling
     fill_codepoints = build_fill_codepoints(fill_charset)
     if fallback_font_obj and fill_codepoints:
         missing_cps = sorted(cp for cp in fill_codepoints if cp not in codepoints_font and str(cp) in fallback_font_obj['cmap'])
@@ -889,11 +938,11 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
             merged_fallback_cps |= merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
             codepoints_font = build_codepoints_font(font)
     
-    # 3. Build conversion tables (Permissive - all potential conversions)
+    # 2. Build conversion tables (Permissive - all potential conversions)
     entries_char_all = build_opencc_char_table(config=config)
     entries_word_all = build_opencc_word_table(config=config)
 
-    # 4. Perform merging for missing characters needed for conversion
+    # 3. Perform merging for missing characters needed for conversion
     if fallback_font_obj and merge_mode != 'universal':
         needed_cps = set()
         for k, v in entries_char_all: needed_cps.add(v)
@@ -905,6 +954,10 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
             print(f"Merging {len(missing_cps)} glyphs from fallback font for conversion targets...")
             merged_fallback_cps |= merge_fallback_glyphs(font, fallback_font_obj, missing_cps)
             codepoints_font = build_codepoints_font(font)
+
+    # 4. Apply variant fallbacks only after fallback-font merging so real glyphs take priority
+    apply_variants(font, config=config)
+    codepoints_font = build_codepoints_font(font)
 
     # 5. Filter tables to what's actually possible
     # A conversion is possible if:
@@ -963,16 +1016,22 @@ def build_font(input_file, output_file, name_header_file=None, font_version=None
 
     word2pseu_table = []
     pseu2word_table = []
+    seen_word_glyphs = set()
 
     # 8. Apply word/phrase conversions via GSUB ligatures
-    for i, (codepoints_k, codepoints_v) in enumerate(final_entries_word):
-        pseudo_glyph_name = 'pseu%X' % i
+    for codepoints_k, codepoints_v in final_entries_word:
         glyph_names_k = [codepoint_to_glyph_name(font, codepoint) for codepoint in codepoints_k]
         glyph_names_v = [codepoint_to_glyph_name(font, codepoint) for codepoint in codepoints_v]
         
         # Skip if any glyph name is missing (should not happen with our filtering)
         if None in glyph_names_k or None in glyph_names_v: continue
-        
+
+        glyph_key = tuple(glyph_names_k)
+        if glyph_key in seen_word_glyphs:
+            continue
+        seen_word_glyphs.add(glyph_key)
+
+        pseudo_glyph_name = 'pseu%X' % len(word2pseu_table)
         insert_empty_glyph(font, pseudo_glyph_name)
         word2pseu_table.append((glyph_names_k, pseudo_glyph_name))
         pseu2word_table.append((pseudo_glyph_name, glyph_names_v))

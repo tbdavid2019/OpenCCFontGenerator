@@ -285,9 +285,26 @@ python -m OpenCCFontGenerator \
 | `--fill-charset` | 先主動從 fallback 補指定字集；`hant-common` 適合先補常用繁中字區 | ❌ |
 | `--font-name` | 新字型的名稱 | ❌ |
 | `--font-version` | 覆寫字型版本號碼 | ❌ |
-| `--twp` | 快捷鍵：啟用台灣慣用語轉換 (等同 `--config twp`) | ❌ |
+| `--twp` | 快捷鍵：啟用台灣慣用語轉換 (等同 `--config twp`，注意可能超翻，見下方說明) | ❌ |
 | `--no-punc` | 排除標點符號的轉換 | ❌ |
 | `--force-vertical` | 強制直排模式 | ❌ |
+
+#### `--config` 轉換模式怎麼選？（避免「超翻」必看）
+
+| 模式 | 轉換內容 | 適用情境 |
+|------|----------|----------|
+| **`s2tw`**（**日常最推薦**） | 簡轉繁（含 `後來`/`頭髮`/`發現`/`皇后`/`業餘`/`面`/`麵條` 等詞級消歧）＋ 台灣標準異體字形（如 `為`、`裡`、`麵`） | **繁體環境日常通用／閱讀簡體文章最安全**。只轉字形、不改詞彙、不改字數，**不會超翻**。 |
+| `s2t` | OpenCC 標準簡轉繁（含詞級消歧），不額外套用台灣字形變體 | 偏好 OpenCC 通用繁體標準、不想套用地區字形微調時。 |
+| **`twp`**（或 `--twp`） | 簡轉繁 ＋ 台灣字形 ＋ **台灣慣用語詞彙替換**（`opencc-data` 詞表含 `1,654` 條片語與 `21` 個單字替換） | **僅建議專門讀大量簡體小說／中國技術文章且想自動換詞時使用**（風險見下方說明）。 |
+| `s2hk` | 簡轉繁 ＋ 香港字形標準 | 香港字體標準需求。 |
+| `t2s` | 繁體轉簡體 | 需要將繁體文字顯示成簡體時。 |
+
+> [!WARNING]
+> **為什麼一般字型不建議直接用 `twp`（超翻與排版錯位風險）？**
+> 1. **繁體日常詞彙也會被硬換**：字型 GSUB 規則無法區分文章原本是簡體還是繁體，套用 `twp` 後，台灣自己常寫的繁體詞也會被改寫——例如「**文件**」→「**檔案**」、「**程序**（法律程序）」→「**程式**」、「**支持**」→「**支援**」、「**默認**」→「**預設**」、「**項目**」→「**專案**」、「**高級**」→「**高階**」、「**打印**」→「**列印**」；單字 `硅` 也會無條件變成 `矽`。
+> 2. **字數變化造成游標與斷行錯位**：`twp` 內有 **`463` 條來源與輸出字數不同的規則**（例如 2 字詞 `高清`→`高畫質`、`藍屏`→`藍色畫面`、`編程`→`程式設計`）。底層 Unicode 字元數不變但畫面拉長，在編輯器／閱讀器中反白選字與換行位置容易對不齊。
+>
+> **建議**：若只想讓簡體內容以正確台灣正體顯示、同時不破壞正常繁體閱讀體驗，請優先使用 **`--config s2tw`**。
 
 ---
 
@@ -449,6 +466,33 @@ python -m OpenCCFontGenerator \
 ## 選項說明：強制直排模式 `--force-vertical`
 
 當開啟此模式時，工具會自動尋找字型內部的 `vert` 或 `vrt2` 排版功能，並將標點符號的映射直接指向直排版字形。適合不支援 OpenType 特性的電子書閱讀器。
+
+---
+
+## 詞庫維護與升級指引 / OpenCC Dictionary Maintenance & Upgrades
+
+本專案目前對齊上游 `BYVoid/OpenCC` **`1.4.2`**（`opencc>=1.4.2` 與 `opencc-data@1.4.2`）：
+
+- **字典與快取位置**：[setup.py](setup.py) 會從 npm `opencc-data@1.4.2` 下載字典到 `src/OpenCCFontGenerator/opencc_data/`（以 `.opencc_data_version` 記錄版本），並搭配 [t2twp.json](src/OpenCCFontGenerator/t2twp.json) 編譯 5 組轉換表快取至 `src/OpenCCFontGenerator/cache/`（以 `.cache_version` 記錄版本；兩者皆列於 `.gitignore`，會在 `setup.py build` 時自動產生）。
+- **升級新版本 OpenCC 的標準作業流程**：
+  - 請閱讀專案根目錄的 [AGENTS.md](AGENTS.md) 與專用 Skill [`.agents/skills/opencc-dict-upgrade/SKILL.md`](.agents/skills/opencc-dict-upgrade/SKILL.md)。
+  - 升級 `opencc` 套件後，需同步核對 `requirements.txt`、`setup.py`、`t2twp.json`、`run.sh`，並特別確認沒有破壞「單字異體表（`TWVariants.txt` / `HKVariants.txt`）禁反推 `t2s(k)`」與「保留 `皇后 -> 皇后` 等防護 guard 且 glyph 數 `<= 65,535`」兩項核心防護。
+- **強制重建快取**：
+  ```bash
+  rm -f src/OpenCCFontGenerator/cache/.cache_version
+  python setup.py build
+  ```
+- **一鍵驗證快取與實際字型塑形**：
+  ```bash
+  # 驗證版本戳記與 5 組快取（s2t / twp / s2tw / s2hk / t2s）詞表不變量
+  PYTHONPATH=src python .agents/skills/opencc-dict-upgrade/scripts/verify_opencc_upgrade.py --expected-version 1.4.2
+
+  # （macOS）可額外指定 --font，實測編譯後 glyph 數 <= 65,535 並以 CoreText 驗證塑形結果
+  PYTHONPATH=src python .agents/skills/opencc-dict-upgrade/scripts/verify_opencc_upgrade.py --expected-version 1.4.2 --font /path/to/font.ttf
+
+  # 執行單元測試
+  PYTHONPATH=src python -m unittest discover -s tests -v
+  ```
 
 ---
 

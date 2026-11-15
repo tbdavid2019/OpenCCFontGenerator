@@ -6,30 +6,62 @@ from urllib.request import urlretrieve
 
 here = path.abspath(path.dirname(__file__))
 pkgroot = path.join(here, 'src/OpenCCFontGenerator')
+OPENCC_DATA_VERSION = '1.4.2'
+OPENCC_DATA_VERSION_FILE = 'opencc_data/.opencc_data_version'
+CACHE_VERSION_FILE = 'cache/.cache_version'
 
 
 def file_exists(filename):
     return path.exists(path.join(pkgroot, filename))
 
 
+def iter_opencc_dict(filepath):
+    '''Yield (key, values_str) pairs from an OpenCC text dictionary, ignoring comments and blanks.'''
+    with open(filepath, encoding='utf-8') as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith('#'):
+                continue
+            k, vx = line.split('\t', 1)
+            yield k, vx
+
+
+def _version_file_matches(relative_path, expected_version):
+    version_path = path.join(pkgroot, relative_path)
+    if not path.exists(version_path):
+        return False
+    with open(version_path, encoding='utf-8') as f:
+        return f.read().strip() == expected_version
+
+
+def is_opencc_data_current():
+    return _version_file_matches(OPENCC_DATA_VERSION_FILE, OPENCC_DATA_VERSION)
+
+
+def is_cache_current():
+    return _version_file_matches(CACHE_VERSION_FILE, OPENCC_DATA_VERSION)
+
+
 def download_data():
     '''
     Download necessary data for the package.
+    Returns True if data was downloaded or refreshed.
     '''
-
-    if any(not file_exists(filename) for filename in (
+    required_files = (
         'cache/通用規範漢字表.txt',
         'opencc_data/STCharacters.txt',
         'opencc_data/STPhrases.txt',
+        'opencc_data/STPhrases_GeneratedFromRegionalPhrases.txt',
         'opencc_data/TSCharacters.txt',
         'opencc_data/TSPhrases.txt',
-        'opencc_data/TWPhrasesIT.txt',
-        'opencc_data/TWPhrasesName.txt',
-        'opencc_data/TWPhrasesOther.txt',
-        'opencc_data/TWVariants.txt',
-        'opencc_data/HKVariants.txt',
         'opencc_data/TWPhrases.txt',
-    )):
+        'opencc_data/TWVariants.txt',
+        'opencc_data/TWVariantsPhrases.txt',
+        'opencc_data/HKVariants.txt',
+        'opencc_data/HKVariantsPhrases.txt',
+    )
+
+    if not is_opencc_data_current() or any(not file_exists(filename) for filename in required_files):
 
         makedirs(path.join(pkgroot, 'cache'), exist_ok=True)
         makedirs(path.join(pkgroot, 'opencc_data'), exist_ok=True)
@@ -38,34 +70,31 @@ def download_data():
                     path.join(pkgroot, 'cache/通用規範漢字表.txt'))
 
         def download_opencc_file(filename):
-            opencc_data_url_prefix = 'https://cdn.jsdelivr.net/npm/opencc-data@1.0.6/data/'
+            opencc_data_url_prefix = f'https://cdn.jsdelivr.net/npm/opencc-data@{OPENCC_DATA_VERSION}/data/'
             urlretrieve(opencc_data_url_prefix + filename,
                         path.join(pkgroot, 'opencc_data', filename))
 
         for filename in (
             'STCharacters.txt',
             'STPhrases.txt',
+            'STPhrases_GeneratedFromRegionalPhrases.txt',
             'TSCharacters.txt',
             'TSPhrases.txt',
-            'TWPhrasesIT.txt',
-            'TWPhrasesName.txt',
-            'TWPhrasesOther.txt',
+            'TWPhrases.txt',
             'TWVariants.txt',
+            'TWVariantsPhrases.txt',
             'HKVariants.txt',
+            'HKVariantsPhrases.txt',
         ):
             download_opencc_file(filename)
 
-        # Combine three TW phrases files into one
-        with open(path.join(pkgroot, 'opencc_data/TWPhrasesIT.txt')) as f1, \
-                open(path.join(pkgroot, 'opencc_data/TWPhrasesName.txt')) as f2, \
-                open(path.join(pkgroot, 'opencc_data/TWPhrasesOther.txt')) as f3, \
-                open(path.join(pkgroot, 'opencc_data/TWPhrases.txt'), 'w') as g:
-            g.write(f1.read())
-            g.write(f2.read())
-            g.write(f3.read())
+        with open(path.join(pkgroot, OPENCC_DATA_VERSION_FILE), 'w', encoding='utf-8') as vf:
+            vf.write(OPENCC_DATA_VERSION + '\n')
+        return True
+    return False
 
 
-def build_convert_tables():
+def build_convert_tables(force=False):
     '''
     Build necessary convert tables from OpenCC data.
     '''
@@ -75,7 +104,7 @@ def build_convert_tables():
     # Initialize OpenCC converters
     converters = {
         's2t': OpenCC('s2t').convert,
-        'twp': OpenCC(path.join(pkgroot, 't2twp')).convert, # Note: this is actually t2twp, used in setup.py logic
+        'twp': OpenCC(path.join(pkgroot, 't2twp.json')).convert, # Note: this is actually t2twp, used in setup.py logic
         's2hk': OpenCC('s2hk').convert,
         's2tw': OpenCC('s2tw').convert,
         't2s': OpenCC('t2s').convert,
@@ -84,61 +113,81 @@ def build_convert_tables():
     # Internal helpers used by original logic
     t2s = OpenCC('t2s').convert
     t2twp = converters['twp']
+    t2hk = OpenCC('t2hk').convert
+    t2tw = OpenCC('t2tw').convert
 
     def build_entries(config='s2t'):
         if config in ('s2t', 'twp'):
-            with open(path.join(pkgroot, 'opencc_data/STCharacters.txt')) as f1, \
-                    open(path.join(pkgroot, 'opencc_data/STPhrases.txt')) as f2, \
-                    open(path.join(pkgroot, 'extra_convert_table.txt')) as f3:
-                for line in chain(f1, f2, f3):
-                    k, vx = line.rstrip('\n').split('\t')
+            for dict_file in (
+                'opencc_data/STCharacters.txt',
+                'opencc_data/STPhrases.txt',
+                'opencc_data/STPhrases_GeneratedFromRegionalPhrases.txt',
+                'extra_convert_table.txt',
+            ):
+                for k, vx in iter_opencc_dict(path.join(pkgroot, dict_file)):
                     v = vx.split(' ')[0]
                     v = t2twp(v) if config == 'twp' else v
                     yield k, v
 
             if config == 'twp':
-                with open(path.join(pkgroot, 'opencc_data/TWVariants.txt')) as f:
-                    for line in f:
-                        k, vx = line.rstrip('\n').split('\t')
+                for k, vx in iter_opencc_dict(path.join(pkgroot, 'opencc_data/TWVariants.txt')):
+                    yield k, vx.split(' ')[0]
+                for dict_file in (
+                    'opencc_data/TWVariantsPhrases.txt',
+                    'opencc_data/TWPhrases.txt',
+                ):
+                    for k, vx in iter_opencc_dict(path.join(pkgroot, dict_file)):
                         v = vx.split(' ')[0]
-                        k = t2s(k)
                         yield k, v
-                with open(path.join(pkgroot, 'opencc_data/TWPhrases.txt')) as f:
-                    for line in f:
-                        k, vx = line.rstrip('\n').split('\t')
-                        v = vx.split(' ')[0]
-                        k = t2s(k)
-                        yield k, v
+                        sk = t2s(k)
+                        if sk != k:
+                            yield sk, v
         
         elif config == 't2s':
-            with open(path.join(pkgroot, 'opencc_data/TSCharacters.txt')) as f1, \
-                    open(path.join(pkgroot, 'opencc_data/TSPhrases.txt')) as f2:
-                for line in chain(f1, f2):
-                    k, vx = line.rstrip('\n').split('\t')
+            for dict_file in ('opencc_data/TSCharacters.txt', 'opencc_data/TSPhrases.txt'):
+                for k, vx in iter_opencc_dict(path.join(pkgroot, dict_file)):
                     v = vx.split(' ')[0]
                     yield k, v
         
         elif config == 's2hk':
-            # Simplified to HK: s2t then t2hk
-            s2t = OpenCC('s2t').convert
-            t2hk = OpenCC('t2hk').convert
-            with open(path.join(pkgroot, 'opencc_data/STCharacters.txt')) as f1, \
-                    open(path.join(pkgroot, 'opencc_data/STPhrases.txt')) as f2:
-                for line in chain(f1, f2):
-                    k, vx = line.rstrip('\n').split('\t')
-                    v = t2hk(s2t(k))
+            for dict_file in (
+                'opencc_data/STCharacters.txt',
+                'opencc_data/STPhrases.txt',
+                'opencc_data/STPhrases_GeneratedFromRegionalPhrases.txt',
+            ):
+                for k, vx in iter_opencc_dict(path.join(pkgroot, dict_file)):
+                    v = t2hk(vx.split(' ')[0])
                     yield k, v
-                    
+            for k, vx in iter_opencc_dict(path.join(pkgroot, 'extra_convert_table.txt')):
+                yield k, vx.split(' ')[0]
+            for k, vx in iter_opencc_dict(path.join(pkgroot, 'opencc_data/HKVariants.txt')):
+                yield k, vx.split(' ')[0]
+            for k, vx in iter_opencc_dict(path.join(pkgroot, 'opencc_data/HKVariantsPhrases.txt')):
+                v = vx.split(' ')[0]
+                yield k, v
+                sk = t2s(k)
+                if sk != k:
+                    yield sk, v
+
         elif config == 's2tw':
-            # Simplified to TW: s2t then t2tw
-            s2t = OpenCC('s2t').convert
-            t2tw = OpenCC('t2tw').convert
-            with open(path.join(pkgroot, 'opencc_data/STCharacters.txt')) as f1, \
-                    open(path.join(pkgroot, 'opencc_data/STPhrases.txt')) as f2:
-                for line in chain(f1, f2):
-                    k, vx = line.rstrip('\n').split('\t')
-                    v = t2tw(s2t(k))
+            for dict_file in (
+                'opencc_data/STCharacters.txt',
+                'opencc_data/STPhrases.txt',
+                'opencc_data/STPhrases_GeneratedFromRegionalPhrases.txt',
+            ):
+                for k, vx in iter_opencc_dict(path.join(pkgroot, dict_file)):
+                    v = t2tw(vx.split(' ')[0])
                     yield k, v
+            for k, vx in iter_opencc_dict(path.join(pkgroot, 'extra_convert_table.txt')):
+                yield k, vx.split(' ')[0]
+            for k, vx in iter_opencc_dict(path.join(pkgroot, 'opencc_data/TWVariants.txt')):
+                yield k, vx.split(' ')[0]
+            for k, vx in iter_opencc_dict(path.join(pkgroot, 'opencc_data/TWVariantsPhrases.txt')):
+                v = vx.split(' ')[0]
+                yield k, v
+                sk = t2s(k)
+                if sk != k:
+                    yield sk, v
 
     def go(config='s2t'):
         cache_words = path.join(pkgroot, f'cache/convert_table_words_{config}.txt')
@@ -152,62 +201,75 @@ def build_convert_tables():
             cache_words = path.join(pkgroot, 'cache/convert_table_words_twp.txt')
             cache_chars = path.join(pkgroot, 'cache/convert_table_chars_twp.txt')
 
-        if not path.exists(cache_words) or not path.exists(cache_chars):
-            entries = build_entries(config=config)
-            entries = dict(entries)
-            entries = sorted(entries.items(), key=lambda k_v: (
+        if force or not path.exists(cache_words) or not path.exists(cache_chars):
+            entries = dict(build_entries(config=config))
+            single_char_keys = {k for k, v in entries.items() if len(k) == 1 and k != v}
+            diff_phrases = {k for k, v in entries.items() if len(k) > 1 and k != v}
+            sorted_entries = sorted(entries.items(), key=lambda k_v: (
                 len(k_v[0]), k_v[0]), reverse=True)
 
-            with open(cache_words, 'w') as f1, \
-                    open(cache_chars, 'w') as f2:
-                for k, v in entries:
-                    if k != v: # Only save if different
-                        print(k, v, sep='\t', file=f1 if len(k) > 1 else f2)
+            with open(cache_words, 'w', encoding='utf-8') as f1, \
+                    open(cache_chars, 'w', encoding='utf-8') as f2:
+                for k, v in sorted_entries:
+                    if len(k) == 1:
+                        if k != v:
+                            print(k, v, sep='\t', file=f2)
+                    else:
+                        if k != v or any(c in single_char_keys for c in k) or any(
+                            k[i:j] in diff_phrases
+                            for i in range(len(k))
+                            for j in range(i + 2, len(k) + 1)
+                        ):
+                            print(k, v, sep='\t', file=f1)
 
     for cfg in configs:
         go(cfg)
 
 
-def build_codepoints():
+def build_codepoints(force=False):
     '''
     Determine the necessary codepoints for the font.
     '''
 
-    if not file_exists('cache/code_points_han.txt'):
+    if force or not file_exists('cache/code_points_han.txt'):
         s = set()
 
-        with open(path.join(pkgroot, 'cache/通用規範漢字表.txt')) as f:
+        with open(path.join(pkgroot, 'cache/通用規範漢字表.txt'), encoding='utf-8') as f:
             for line in f:
                 if line and not line.startswith('#'):
                     c = line[0]
                     s.add(ord(c))
 
         for filename in (
-            'STCharacters.txt', 'STPhrases.txt', 'TSCharacters.txt', 'TSPhrases.txt',
-            'TWVariants.txt', 'TWPhrases.txt', 'HKVariants.txt'
+            'STCharacters.txt', 'STPhrases.txt', 'STPhrases_GeneratedFromRegionalPhrases.txt',
+            'TSCharacters.txt', 'TSPhrases.txt',
+            'TWVariants.txt', 'TWVariantsPhrases.txt', 'TWPhrases.txt',
+            'HKVariants.txt', 'HKVariantsPhrases.txt',
         ):
-            with open(path.join(pkgroot, 'opencc_data', filename)) as f:
-                for line in f:
-                    k, vx = line.rstrip('\n').split('\t')
-                    vs = vx.split(' ')
-                    for c in k:
+            for k, vx in iter_opencc_dict(path.join(pkgroot, 'opencc_data', filename)):
+                vs = vx.split(' ')
+                for c in k:
+                    s.add(ord(c))
+                for v in vs:
+                    for c in v:
                         s.add(ord(c))
-                    for v in vs:
-                        for c in v:
-                            s.add(ord(c))
 
         for c in '妳攞噉㗎冚喺冇哋啲嘢啱佢嘅咁嚟屌咗撚噏瞓𡃁嘥掹孭氹詏噃𨳍掟埞曱甴𥄫𨳊嚿閪冧嬲卌嗻𧨾':
             s.add(ord(c))
 
-        with open(path.join(pkgroot, 'cache/code_points_han.txt'), 'w') as f:
+        with open(path.join(pkgroot, 'cache/code_points_han.txt'), 'w', encoding='utf-8') as f:
             for cp in sorted(s):
                 if cp > 128:  # remove letters in the dictionaries
                     print(cp, file=f)
 
 
-download_data()
-build_convert_tables()
-build_codepoints()
+data_updated = download_data()
+cache_force = data_updated or not is_cache_current()
+build_convert_tables(force=cache_force)
+build_codepoints(force=cache_force)
+if cache_force:
+    with open(path.join(pkgroot, CACHE_VERSION_FILE), 'w', encoding='utf-8') as vf:
+        vf.write(OPENCC_DATA_VERSION + '\n')
 
 with open(path.join(here, 'README.md')) as f:
     long_description = f.read()
@@ -242,7 +304,7 @@ setup(
     include_package_data=True,
     python_requires='>=3.8, <4',
     install_requires=[
-        'opencc>=1.2.0',
+        'opencc>=1.4.2',
         'fonttools>=4.62.1',
         'brotli',
     ],

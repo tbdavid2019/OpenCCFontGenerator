@@ -36,10 +36,10 @@ else
     # 環境已存在，直接啟動
     source "$VENV_PATH/bin/activate"
     
-    # 確保 fontTools 版本具備 CFF dehint API，避免 otfcc 產生瀏覽器拒絕的 CharString。
-    if ! python3 -c "import brotli; from fontTools import cffLib; assert hasattr(cffLib.CFFFontSet, 'desubroutinize') and hasattr(cffLib.CFFFontSet, 'remove_hints')" &> /dev/null; then
-        echo "📦 偵測到缺少必要套件或 fontTools 版本過舊，正在更新..."
-        pip install --upgrade "fonttools>=4.62.1" brotli
+    # 確保 fontTools 與 OpenCC 版本已對齊需求。
+    if ! python3 -c "import brotli, importlib.metadata; from fontTools import cffLib; assert hasattr(cffLib.CFFFontSet, 'desubroutinize') and hasattr(cffLib.CFFFontSet, 'remove_hints'); ver = tuple(int(p) for p in importlib.metadata.version('opencc').split('.')[:3]); assert ver >= (1, 4, 2)" &> /dev/null; then
+        echo "📦 偵測到缺少必要套件或版本過舊，正在更新..."
+        pip install --upgrade -r requirements.txt
     fi
 fi
 
@@ -74,10 +74,11 @@ if ! command -v otfccdump &> /dev/null; then
     echo "--------------------------------------------------------"
 fi
 
-# 4. 檢查並建立 OpenCC 轉換快取 (若無快取或首次執行)
+# 4. 檢查並建立 OpenCC 轉換快取 (若無快取或字典版本過舊)
 CACHE_FILE="src/OpenCCFontGenerator/cache/convert_table_chars_twp.txt"
-if [ ! -f "$CACHE_FILE" ]; then
-    echo "⚙️ 正在建置 OpenCC 轉換快取字典 (初次執行需 10~20 秒)..."
+DATA_VER_FILE="src/OpenCCFontGenerator/opencc_data/.opencc_data_version"
+if [ ! -f "$CACHE_FILE" ] || [ ! -f "$DATA_VER_FILE" ] || [ "$(cat "$DATA_VER_FILE")" != "1.4.2" ]; then
+    echo "⚙️ 正在建置 OpenCC 1.4.2 轉換快取字典 (初次或版本更新需 10~20 秒)..."
     # Ensure setuptools is installed for setup.py
     pip install setuptools > /dev/null 2>&1
     python setup.py build

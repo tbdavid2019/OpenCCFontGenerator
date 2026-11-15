@@ -4,7 +4,48 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ---
 
-## [Unreleased]
+## [2026-11-15]
+
+### Added
+
+#### 新增 OpenCC 詞庫與版本升級 Skill（`opencc-dict-upgrade`）
+- **新增專案 Skill `.agents/skills/opencc-dict-upgrade/SKILL.md`**：系統化整理對齊上游 `BYVoid/OpenCC` 與 `opencc-data` 的升級步驟、必守建表不變量（單字異體表防反推污染、`k == v` guard 剪枝、`.cache_version` 雙戳記、`t2twp.json` schema 驗證）與發佈前驗證清單。
+- **新增驗證腳本 `.agents/skills/opencc-dict-upgrade/scripts/verify_opencc_upgrade.py`**：可一鍵檢查版本戳記、5 組快取詞表完整性與（於 macOS 指定 `--font` 時）`build_font` glyph 上限及 CoreText 塑形結果。
+- **新增與更新指引文件 `AGENTS.md` / `README.md`**：建立根目錄 [AGENTS.md](AGENTS.md) 說明環境、關鍵不變量與 `opencc-dict-upgrade` skill 入口，並在 `README.md` 補充 `--config` 各模式差異與 `twp` 超翻／排版錯位風險對照表，以及詞庫升級與驗證腳本使用說明，確保後續開發或新 session 能立即找到並遵守規範。
+- **整理專案文件與 OpenSpec Skills 目錄**：納入 Web 化可行性評估文件 `docs/web-port-feasibility-assessment.md`，並將舊版各 IDE／CLI 專屬 OpenSpec skills 統整遷移至 `.agents/skills/`（含新增 `openspec-sync-specs`、`openspec-update-change`）。
+- **Files added/updated**: `.agents/skills/opencc-dict-upgrade/SKILL.md`, `.agents/skills/opencc-dict-upgrade/scripts/verify_opencc_upgrade.py`, `.agents/skills/openspec-*`, `AGENTS.md`, `README.md`, `docs/web-port-feasibility-assessment.md`
+
+### Changed
+
+#### 對齊上游 BYVoid/OpenCC 最新版（`OpenCC 1.4.2` / `opencc-data@1.4.2`）
+- **升級 OpenCC 套件與詞庫版本**：
+  - 將 `requirements.txt` 與 `setup.py` 的依賴從 `opencc<1.2` 更新為 `opencc>=1.4.2`，並在 `.virtualenvs/opencc_gen` 環境安裝 `opencc==1.4.2`。
+  - 將 `setup.py` 的 `OPENCC_DATA_VERSION` 更新為 `1.4.2`，改從 `opencc-data@1.4.2` 下載字典，並透過 `opencc_data/.opencc_data_version` 與 `cache/.cache_version` 追蹤版本狀態，確保版本升級或部分建置失敗時能自動重刷快取。
+  - 更新 `run.sh` 的版本驗證邏輯，檢查 `opencc >= (1, 4, 2)` 與快取版本檔 `.opencc_data_version == 1.4.2`。
+- **相容 OpenCC 1.4.2 字典格式與設定檔結構**：
+  - 在 `setup.py` 新增 `iter_opencc_dict()` 以安全跳過 `opencc-data@1.4.2` 的 `#` 註解與空行，並納入新增的 `STPhrases_GeneratedFromRegionalPhrases.txt`、`TWVariantsPhrases.txt`、`HKVariantsPhrases.txt` 與合併後的 `TWPhrases.txt`。
+  - 重構 `src/OpenCCFontGenerator/t2twp.json`，改用 `1.4.2` 的 `TWPhrases.txt`、`TWVariantsPhrases.txt`、`TWVariants.txt`，並於 `segmentation.dict` 補齊 `"match_policy": "union"` 與 `conversion_chain` 的 `"match_policy": "short_circuit"`，消除 schema 警告；同時在 `setup.py` 傳入 `t2twp.json` 完整副檔名。
+  - 在 `setup.py` 建表時：針對一簡對多繁／防護詞條保留觸及單字或子詞的 `k == v` guard（如 `皇后 -> 皇后`）並剪除多餘無差異 `k == v` 條目，讓轉換後字型 glyph 數維持在 65,535 上限內（實測 `Iansui-Regular` + `twp` 為 `56,998` glyphs）；同時避免對單字異體表（`TWVariants.txt`、`HKVariants.txt`）反推 `t2s(k)`，防止 `麪->麵`、`檯->枱`、`柺->枴` 誤覆寫為 `面->麵`、`台->枱`、`拐->枴`。
+- **驗證**：已完成 `python setup.py build` 重建 5 組設定快取（`s2t`、`twp`、`s2tw`、`s2hk`、`t2s`），驗證 `皇后`、`后来`、`发现`、`业余`、`软件`、`面`、`面条` 與 `s2hk` 詞表，並對 `Iansui-Regular.ttf`（`twp`）實測編譯與 CoreText 塑形驗證通過。
+- **Files changed**: `requirements.txt`, `setup.py`, `src/OpenCCFontGenerator/t2twp.json`, `run.sh`, `CHANGELOG.md`
+
+### Fixed
+
+#### OpenCC GSUB 詞彙替換失效（如「后来」顯示「后來」、「业余」顯示「業余」）與異體字跨字誤映（如「發現」／「髮現」）
+- **修復 GSUB 重複 Feature Tag 導致 OpenCC 替換規則完全失效**：
+  - `otfccdump` 會將來源字型原有的 feature 匯出成帶索引後綴的名稱（如 `liga_00036`、`rlig_00051`、`ccmp_00007`）。原本的 `insert_empty_feature()` 直接新增 `liga` / `rlig` / `ccmp` 鍵值，造成同一個語系內出現重複 feature tag，導致 CoreText 與 HarfBuzz 忽略 OpenCC 的 `word2pseu`、`char2char`、`pseu2word` lookups，使「后来」在僅套用 `cmap` 下顯示為「后來」、「业余」顯示為「業余」。
+  - 現在會辨識並合併既有的同 tag feature（如 `liga_*`、`rlig_*`、`ccmp_*`），確保每個 `LangSys` 僅保留單一 `liga` / `rlig` / `ccmp` feature，並維持 `word2pseu -> char2char -> pseu2word` 的 lookup 執行順序。
+- **修正 `apply_variants()` 執行順序與異體字跨字污染**：
+  - 將 `apply_variants()` 移至 `--fallback-font` 補字完成之後再執行，避免在有備用字型時搶先把缺失的繁體字（如「後」、「發」、「髮」）提前映到簡體或異體字形，導致 fallback 補字失效。
+  - 在 `apply_variants()` 中隔離同簡對多繁的易混字形（例如不讓 `發`／`発` 與 `髮`／`髪` 彼此交叉回退），避免缺字時把「發現」誤顯為「髮現」或把「頭髮」誤顯為「頭發」。
+  - 修正 `apply_variants()` 解析 `Var_hk.txt` 中含空白字元的項目時拋出 `TypeError` 的問題，並在 `t2s` 模式下略過繁體異體字預填，避免干擾繁轉簡規則。
+- **去除 `word2pseu` 重複來源字形序列**：避免 `cmap` 補齊簡體碼位後產生重複的 `from` glyph sequence，節省 pseudo glyph 名額並確保編譯結果穩定。
+- **驗證**：已對 `Iansui-Regular.ttf` 與 `[origin]/jf金萱那提2.0半糖.otf` 實測重建並以 CoreText 驗證（`业余`/`業余`→`業餘`、`后来`→`後來`、`皇后`→`皇后`、`发现`→`發現`、`头发`→`頭髮`、`多余`→`多餘`），並通過單元測試。
+- **Files changed**: `src/OpenCCFontGenerator/font.py`, `tests/test_font_io.py`, `CHANGELOG.md`
+
+---
+
+## [2026-08-08]
 
 ### Fixed
 
