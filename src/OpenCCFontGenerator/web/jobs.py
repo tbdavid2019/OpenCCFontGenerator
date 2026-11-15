@@ -262,26 +262,28 @@ def _read_log_tail(log_path: Path, max_lines: int = 80) -> List[str]:
 
 
 def _terminate_process_group(proc: subprocess.Popen, wait_timeout: float = 3.0) -> None:
-    """Terminate a worker and its native child process group cleanly."""
-    if proc.poll() is not None:
-        return
-    try:
-        if os.name == 'posix':
+    """Terminate a worker and its entire native child process group cleanly."""
+    pgid: Optional[int] = None
+    if os.name == 'posix':
+        try:
             pgid = os.getpgid(proc.pid)
-            os.killpg(pgid, signal.SIGTERM)
+        except ProcessLookupError:
+            pgid = None
+
+    try:
+        if proc.poll() is None:
+            if pgid is not None:
+                os.killpg(pgid, signal.SIGTERM)
+            else:
+                proc.terminate()
             try:
                 proc.wait(timeout=wait_timeout)
-                return
             except subprocess.TimeoutExpired:
-                os.killpg(pgid, signal.SIGKILL)
-        else:
-            proc.terminate()
-            try:
+                if pgid is not None:
+                    os.killpg(pgid, signal.SIGKILL)
+                else:
+                    proc.kill()
                 proc.wait(timeout=wait_timeout)
-                return
-            except subprocess.TimeoutExpired:
-                proc.kill()
-        proc.wait(timeout=wait_timeout)
     except ProcessLookupError:
         pass
     except Exception:
@@ -290,6 +292,15 @@ def _terminate_process_group(proc: subprocess.Popen, wait_timeout: float = 3.0) 
             proc.wait(timeout=1.0)
         except Exception:
             pass
+    finally:
+        # Ensure any descendant child processes still remaining in pgid are killed
+        if pgid is not None:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except Exception:
+                pass
 
 
 class JobManager:
@@ -301,7 +312,6 @@ class JobManager:
         self._lock = threading.RLock()
         self._jobs: Dict[str, dict] = {}
         self._pending_dirs: Dict[str, float] = {}
-        self._reserved_slots = 0
         self._queue_order: List[str] = []
         self._processes: Dict[str, subprocess.Popen] = {}
         self._executor = ThreadPoolExecutor(
@@ -332,7 +342,10 @@ class JobManager:
             procs = list(self._processes.values())
         for proc in procs:
             _terminate_process_group(proc)
-        self._executor.shutdown(wait=False, cancel_futures=True)
+        if sys.version_info >= (3, 9):
+            self._executor.shutdown(wait=False, cancel_futures=True)
+        else:
+            self._executor.shutdown(wait=False)
 
     def _job_dir(self, job_id: str) -> Path:
         return self.settings.storage_dir / job_id
@@ -361,10 +374,6 @@ class JobManager:
                 continue
             try:
                 record = json.loads(meta_file.read_text(encoding='utf-8'))
-                expires_at = datetime.fromisoformat(record['expires_at'])
-                if expires_at <= now:
-                    shutil.rmtree(entry, ignore_errors=True)
-                    continue
                 if record.get('status') in ('queued', 'running'):
                     record['status'] = 'failed'
                     record['phase'] = 'interrupted'
@@ -372,6 +381,10 @@ class JobManager:
                     record['finished_at'] = now.isoformat()
                     record['expires_at'] = (now + timedelta(seconds=self.settings.job_ttl_seconds)).isoformat()
                     self._save_meta(record)
+                expires_at = datetime.fromisoformat(record['expires_at'])
+                if expires_at <= now:
+                    shutil.rmtree(entry, ignore_errors=True)
+                    continue
                 self._jobs[record['job_id']] = record
             except Exception:
                 shutil.rmtree(entry, ignore_errors=True)
@@ -414,7 +427,7 @@ class JobManager:
         """Atomically reserve queue capacity and allocate an isolated directory."""
         with self._lock:
             _, queued = self.counts()
-            if (queued + self._reserved_slots) >= self.settings.max_queued_jobs:
+            if (queued + len(self._pending_dirs)) >= self.settings.max_queued_jobs:
                 raise HTTPException(
                     status_code=503,
                     detail=f'目前佇列已滿（上限 {self.settings.max_queued_jobs} 筆排隊任務），請稍後再試。',
@@ -423,15 +436,13 @@ class JobManager:
             job_dir = self._job_dir(job_id)
             (job_dir / 'inputs').mkdir(parents=True, exist_ok=True)
             (job_dir / 'outputs').mkdir(parents=True, exist_ok=True)
-            self._reserved_slots += 1
             self._pending_dirs[job_id] = time.time()
             return job_id, job_dir
 
     def release_pending_job(self, job_id: str) -> None:
         """Release a pre-submission slot and delete any partial upload directory."""
         with self._lock:
-            if self._pending_dirs.pop(job_id, None) is not None and self._reserved_slots > 0:
-                self._reserved_slots -= 1
+            self._pending_dirs.pop(job_id, None)
         shutil.rmtree(self._job_dir(job_id), ignore_errors=True)
 
     def submit_job(self, job_id: str, mode: str, spec: dict, summary: dict) -> dict:
@@ -465,8 +476,7 @@ class JobManager:
         }
 
         with self._lock:
-            if self._pending_dirs.pop(job_id, None) is not None and self._reserved_slots > 0:
-                self._reserved_slots -= 1
+            self._pending_dirs.pop(job_id, None)
             self._jobs[job_id] = record
             self._queue_order.append(job_id)
             self._save_meta(record)

@@ -34,7 +34,7 @@ def _classify_artifact(filename: str) -> str:
     return 'other'
 
 
-def _package_zip(zip_path: Path, files: list[Path], base_dir: Path | None = None) -> Path:
+def _package_zip(zip_path: Path, files: List[Path], base_dir: Optional[Path] = None) -> Path:
     with zipfile.ZipFile(zip_path, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=6) as zf:
         for file_path in files:
             arcname = str(file_path.relative_to(base_dir)) if base_dir else file_path.name
@@ -42,7 +42,7 @@ def _package_zip(zip_path: Path, files: list[Path], base_dir: Path | None = None
     return zip_path
 
 
-def _register_outputs(outputs_dir: Path, candidates: list[Path], primary_path: Path) -> list[dict]:
+def _register_outputs(outputs_dir: Path, candidates: List[Path], primary_path: Path) -> List[dict]:
     artifacts = []
     seen = set()
     ordered = [primary_path, *[p for p in candidates if p != primary_path]]
@@ -60,7 +60,7 @@ def _register_outputs(outputs_dir: Path, candidates: list[Path], primary_path: P
     return artifacts
 
 
-def _run_convert(spec: dict, outputs_dir: Path, phase_file: Path) -> list[dict]:
+def _run_convert(spec: dict, outputs_dir: Path, phase_file: Path) -> List[dict]:
     params = spec['params']
     source_path = Path(spec['input_file'])
     stem = source_path.stem
@@ -106,7 +106,7 @@ def _run_convert(spec: dict, outputs_dir: Path, phase_file: Path) -> list[dict]:
     return _register_outputs(outputs_dir, produced, primary)
 
 
-def _run_rotate90(spec: dict, outputs_dir: Path, phase_file: Path) -> list[dict]:
+def _run_rotate90(spec: dict, outputs_dir: Path, phase_file: Path) -> List[dict]:
     params = spec['params']
     source_path = Path(spec['input_file'])
     stem = source_path.stem
@@ -133,7 +133,7 @@ def _run_rotate90(spec: dict, outputs_dir: Path, phase_file: Path) -> list[dict]
     return _register_outputs(outputs_dir, [output_font], output_font)
 
 
-def _run_webfont(spec: dict, outputs_dir: Path, phase_file: Path) -> list[dict]:
+def _run_webfont(spec: dict, outputs_dir: Path, phase_file: Path) -> List[dict]:
     params = spec['params']
     source_path = Path(spec['input_file'])
     output_woff2 = outputs_dir / f"{source_path.stem}.woff2"
@@ -153,14 +153,14 @@ def _run_webfont(spec: dict, outputs_dir: Path, phase_file: Path) -> list[dict]:
     return _register_outputs(outputs_dir, produced, bundle)
 
 
-def _collect_output_files(output_dir: Path) -> list[Path]:
+def _collect_output_files(output_dir: Path) -> List[Path]:
     return sorted(
         p for p in output_dir.iterdir()
         if p.is_file() and p.suffix.lower() in ('.ttf', '.otf', '.woff2', '.css')
     )
 
 
-def _run_static_family(spec: dict, outputs_dir: Path, phase_file: Path) -> list[dict]:
+def _run_static_family(spec: dict, outputs_dir: Path, phase_file: Path) -> List[dict]:
     params = spec['params']
     batch_dir = outputs_dir / 'family_files'
     batch_dir.mkdir(parents=True, exist_ok=True)
@@ -190,7 +190,7 @@ def _run_static_family(spec: dict, outputs_dir: Path, phase_file: Path) -> list[
     return _register_outputs(outputs_dir, [bundle], bundle)
 
 
-def _run_variable_family(spec: dict, outputs_dir: Path, phase_file: Path) -> list[dict]:
+def _run_variable_family(spec: dict, outputs_dir: Path, phase_file: Path) -> List[dict]:
     params = spec['params']
     batch_dir = outputs_dir / 'vf_files'
     batch_dir.mkdir(parents=True, exist_ok=True)

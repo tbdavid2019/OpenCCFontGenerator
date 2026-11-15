@@ -59,7 +59,9 @@ def find_fallback_for_weight(fallback_dir, fallback_prefix, weight_name):
 
 
 def sanitize_filename_part(value):
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_") or "Output"
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", value or "")
+    cleaned = re.sub(r"\.{2,}", "_", cleaned).strip("._")
+    return cleaned or "Output"
 
 
 def build_variable_cjk_family(

@@ -231,7 +231,11 @@ function switchMode(mode) {
   document.getElementById('submit-btn').textContent = meta.submitLabel;
 
   hideFeedback();
+  const drawerWasOpen = document.getElementById('nav-rail').classList.contains('is-open');
   closeMobileDrawer(false);
+  if (drawerWasOpen) {
+    document.getElementById('mode-heading').focus({ preventScroll: true });
+  }
   refreshSpecimen();
   updateCurlPreview();
 }

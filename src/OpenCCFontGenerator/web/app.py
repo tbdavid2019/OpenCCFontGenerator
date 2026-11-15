@@ -65,10 +65,13 @@ class _BodyTooLarge(Exception):
 def _parse_trusted_networks(entries: Tuple[str, ...]) -> List[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]]:
     networks: List[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]] = []
     for raw in entries:
-        try:
-            networks.append(ipaddress.ip_network(raw.strip(), strict=False))
-        except ValueError:
+        cleaned = raw.strip()
+        if not cleaned:
             continue
+        try:
+            networks.append(ipaddress.ip_network(cleaned, strict=False))
+        except ValueError as exc:
+            raise ValueError(f'無效的 OPENCC_WEB_TRUSTED_PROXIES 項目：{cleaned!r}') from exc
     return networks
 
 
@@ -89,11 +92,8 @@ def _client_ip_from_scope(
 ) -> str:
     client = scope.get('client')
     peer_host = client[0] if client else 'unknown'
-    if not trust_proxy:
-        return peer_host
-
-    # Require immediate peer to match configured trusted proxies when proxy list is defined
-    if trusted_networks and not _is_trusted_ip(peer_host, trusted_networks):
+    # Fail closed unless proxy trust is explicitly enabled AND non-empty trusted proxies are configured
+    if not trust_proxy or not trusted_networks or not _is_trusted_ip(peer_host, trusted_networks):
         return peer_host
 
     headers: Dict[bytes, bytes] = dict(scope.get('headers') or [])
@@ -101,12 +101,10 @@ def _client_ip_from_scope(
     if raw_xff:
         hops = [h.strip() for h in raw_xff.decode('latin-1').split(',') if h.strip()]
         if hops:
-            if trusted_networks:
-                for hop in reversed(hops):
-                    if not _is_trusted_ip(hop, trusted_networks):
-                        return hop
-                return hops[0]
-            return hops[-1]
+            for hop in reversed(hops):
+                if not _is_trusted_ip(hop, trusted_networks):
+                    return hop
+            return hops[0]
 
     raw_xri = headers.get(b'x-real-ip')
     if raw_xri:
@@ -185,19 +183,23 @@ class UploadGuardMiddleware:
                 return
 
         received_bytes = 0
+        body_exceeded = False
         response_started = False
 
         async def bounded_receive() -> Dict[str, Any]:
-            nonlocal received_bytes
+            nonlocal received_bytes, body_exceeded
             message = await receive()
             if message.get('type') == 'http.request':
                 received_bytes += len(message.get('body', b''))
                 if received_bytes > self.max_body_bytes:
+                    body_exceeded = True
                     raise _BodyTooLarge()
             return message
 
         async def tracking_send(message: Dict[str, Any]) -> None:
             nonlocal response_started
+            if body_exceeded and not response_started:
+                return
             if message.get('type') == 'http.response.start':
                 response_started = True
             await send(message)
@@ -205,12 +207,14 @@ class UploadGuardMiddleware:
         try:
             await self.app(scope, bounded_receive, tracking_send)
         except _BodyTooLarge:
-            if not response_started:
-                await _send_json_error(
-                    send,
-                    status_code=413,
-                    detail=f'請求內容超過單次上傳上限（{self.settings.max_total_upload_mb} MB）。',
-                )
+            body_exceeded = True
+
+        if body_exceeded and not response_started:
+            await _send_json_error(
+                send,
+                status_code=413,
+                detail=f'請求內容超過單次上傳上限（{self.settings.max_total_upload_mb} MB）。',
+            )
 
 
 def _read_opencc_data_version() -> Optional[str]:
@@ -470,7 +474,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
                 'kobo_mode': kobo_mode,
             }
             return manager.submit_job(job_id, 'convert', spec, summary)
-        except Exception:
+        except BaseException:
             manager.release_pending_job(job_id)
             raise
 
@@ -509,7 +513,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
                 'kobo_mode': kobo_mode,
             }
             return manager.submit_job(job_id, 'rotate90', spec, summary)
-        except Exception:
+        except BaseException:
             manager.release_pending_job(job_id)
             raise
 
@@ -540,7 +544,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
                 'font_family': spec['params']['font_family'] or src_path.stem,
             }
             return manager.submit_job(job_id, 'webfont', spec, summary)
-        except Exception:
+        except BaseException:
             manager.release_pending_job(job_id)
             raise
 
@@ -611,7 +615,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
                 'output_woff2': output_woff2,
             }
             return manager.submit_job(job_id, 'static-family', spec, summary)
-        except Exception:
+        except BaseException:
             manager.release_pending_job(job_id)
             raise
 
@@ -684,7 +688,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
                 'config': config,
             }
             return manager.submit_job(job_id, 'variable-family', spec, summary)
-        except Exception:
+        except BaseException:
             manager.release_pending_job(job_id)
             raise
 

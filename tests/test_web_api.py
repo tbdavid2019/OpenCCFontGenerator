@@ -296,15 +296,17 @@ class WebApiTests(unittest.TestCase):
                 self.assertIn(expected_file, {a['filename'] for a in res['artifacts']})
 
     def test_security_hardening_guards(self):
-        # 1. Proxy headers ignored by default; trusted proxy chain hops resolved right-to-left
+        # 1. Proxy headers fail closed unless trust_proxy=True AND valid trusted_proxies configured
         spoof_scope = {
             'type': 'http',
             'client': ('198.51.100.25', 12345),
             'headers': [(b'x-forwarded-for', b'203.0.113.9, 10.0.0.5')],
         }
         self.assertEqual(_client_ip_from_scope(spoof_scope, False, []), '198.51.100.25')
+        self.assertEqual(_client_ip_from_scope(spoof_scope, True, []), '198.51.100.25')
+        with self.assertRaises(ValueError):
+            _parse_trusted_networks(('not-an-ip',))
         trusted_nets = _parse_trusted_networks(('127.0.0.1', '10.0.0.0/8'))
-        # Direct untrusted peer cannot spoof XFF even when trust_proxy=True
         self.assertEqual(_client_ip_from_scope(spoof_scope, True, trusted_nets), '198.51.100.25')
         proxied_scope = {
             'type': 'http',
@@ -320,13 +322,24 @@ class WebApiTests(unittest.TestCase):
                 self.assertEqual(degraded.status_code, 503)
                 self.assertEqual(degraded.json()['status'], 'degraded')
 
-            # 3. Pre-multipart Content-Length limit returns 413 cleanly
+            # 3. Pre-multipart Content-Length AND streaming/chunked limits return 413 (not 400)
             too_large = client.post(
                 '/api/v1/jobs/webfont',
                 headers={'Content-Length': str(50 * 1024 * 1024)},
                 content=b'x',
             )
             self.assertEqual(too_large.status_code, 413)
+
+            def _oversized_stream():
+                for _ in range(9):
+                    yield b'x' * (1024 * 1024)
+
+            streamed_too_large = client.post(
+                '/api/v1/jobs/webfont',
+                headers={'Content-Type': 'multipart/form-data; boundary=testboundary'},
+                content=_oversized_stream(),
+            )
+            self.assertEqual(streamed_too_large.status_code, 413)
 
             # 4. Path traversal in fallback_prefix rejected with 400
             bad_prefix = client.post(
