@@ -1,0 +1,490 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenCCFontGenerator｜OpenType 字型轉換工作台</title>
+  <link rel="icon" type="image/svg+xml" href="/static/favicon.svg">
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <div id="nav-backdrop" class="nav-backdrop" hidden></div>
+
+    <aside id="nav-rail" class="nav-rail" aria-label="轉換模式導覽">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="square" stroke-linejoin="miter">
+            <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+            <path d="M7 9h10M12 9v8M8.5 17h7"></path>
+          </svg>
+        </div>
+        <div>
+          <div class="brand-title">OpenCC 字型工作台</div>
+          <div class="brand-sub" id="brand-version">OpenCC · OpenType GSUB</div>
+        </div>
+      </div>
+
+      <nav class="mode-nav" aria-label="字型生成模式">
+        <button type="button" class="mode-btn is-active" data-mode="convert" aria-current="page">
+          <span class="mode-label">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 7h11M11 4l4 3-4 3M20 17H9M13 14l-4 3 4 3"/></svg>
+            <span>單一字型轉換</span>
+          </span>
+          <span class="mode-tag">convert</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="rotate90">
+          <span class="mode-label">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
+            <span>90° 直排旋轉</span>
+          </span>
+          <span class="mode-tag">rotate90</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="webfont">
+          <span class="mode-label">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3a14 14 0 0 1 0 18M12 3a14 14 0 0 0 0 18"/></svg>
+            <span>Webfont 打包</span>
+          </span>
+          <span class="mode-tag">woff2</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="static-family">
+          <span class="mode-label">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><rect x="4" y="4" width="7" height="7" rx="1"/><rect x="13" y="4" width="7" height="7" rx="1"/><rect x="4" y="13" width="7" height="7" rx="1"/><rect x="13" y="13" width="7" height="7" rx="1"/></svg>
+            <span>靜態字型家族</span>
+          </span>
+          <span class="mode-tag">static</span>
+        </button>
+        <button type="button" class="mode-btn" data-mode="variable-family">
+          <span class="mode-label">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 20L10 4l6 16M6.5 14h7M18 10v10M15 15h6"/></svg>
+            <span>可變字型家族</span>
+          </span>
+          <span class="mode-tag">vf</span>
+        </button>
+      </nav>
+
+      <div class="rail-footer">
+        <div class="rail-quota-title">服務資源配額</div>
+        <dl class="quota-list">
+          <div class="quota-row"><dt>單檔上限</dt><dd id="cap-max-file">-- MB</dd></div>
+          <div class="quota-row"><dt>單次總上傳</dt><dd id="cap-max-total">-- MB</dd></div>
+          <div class="quota-row"><dt>並行 Worker</dt><dd id="cap-workers">--</dd></div>
+          <div class="quota-row"><dt>速率上限</dt><dd id="cap-rate">--</dd></div>
+          <div class="quota-row"><dt>下載保留期</dt><dd id="cap-ttl">--</dd></div>
+        </dl>
+        <div class="rail-links">
+          <a href="/docs" target="_blank" rel="noopener">Swagger /docs</a>
+          <a href="/redoc" target="_blank" rel="noopener">ReDoc</a>
+        </div>
+      </div>
+    </aside>
+
+    <div class="main-column">
+      <header class="topbar">
+        <div class="topbar-left">
+          <button type="button" id="mobile-nav-btn" class="icon-btn mobile-only" aria-label="切換模式選單" aria-expanded="false">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"/></svg>
+          </button>
+          <div>
+            <h1 id="mode-heading">單一字型簡繁轉換與 GSUB 規則編譯</h1>
+            <p id="mode-subtitle" class="topbar-sub">上傳來源字型並編譯詞彙級 OpenCC OpenType 查找表</p>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <span id="health-pill" class="health-pill" role="status" aria-live="polite">檢查中…</span>
+          <a class="topbar-link" href="/docs" target="_blank" rel="noopener">
+            <span>OpenAPI /docs</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" aria-hidden="true"><path d="M7 17L17 7M9 7h8v8"/></svg>
+          </a>
+        </div>
+      </header>
+
+      <section id="specimen-strip" class="specimen-strip" aria-label="OpenCC 詞彙轉換即時見本條">
+        <div class="specimen-pairs" id="specimen-pairs"></div>
+        <div class="specimen-controls">
+          <div class="specimen-test-wrap">
+            <label for="specimen-custom-input" class="sr-only">即時詞彙試轉</label>
+            <input id="specimen-custom-input" type="text" maxlength="60" placeholder="輸入詞彙試轉（例如：软件头发）" autocomplete="off">
+            <span id="specimen-custom-output" class="specimen-custom-output" hidden></span>
+          </div>
+          <span id="specimen-meta" class="specimen-meta">CONFIG: s2t</span>
+        </div>
+      </section>
+
+      <div class="workspace">
+        <main class="form-pane">
+          <!-- MODE 1: convert -->
+          <form id="form-convert" class="mode-form" data-mode="convert">
+            <div class="dropzone" data-drop="convert-source">
+              <input id="convert-source-input" name="source_font" type="file" accept=".ttf,.otf,.ttc,.woff2" class="sr-only">
+              <div class="dropzone-info">
+                <strong>來源字型檔（必填）</strong>
+                <p id="convert-source-label">拖曳或點擊選擇 .ttf / .otf / .ttc / .woff2（自動壓縮與校驗 OpenType 表）</p>
+              </div>
+              <div class="dropzone-actions">
+                <label for="convert-source-input" class="btn-outline">選擇主字型</label>
+                <button type="button" class="btn-clear" data-clear="convert-source" hidden>清除</button>
+              </div>
+            </div>
+
+            <div class="field-grid-2">
+              <div class="field-box">
+                <label for="convert-config">OpenCC 轉換標準 (config)</label>
+                <select id="convert-config" name="config" data-preview-config>
+                  <option value="s2t">s2t：簡體轉繁體（OpenCC 標準）</option>
+                  <option value="twp">twp：繁體 + 台灣慣用語（如：软件 → 軟體）</option>
+                  <option value="s2tw">s2tw：簡體轉台灣正體字形</option>
+                  <option value="s2hk">s2hk：簡體轉香港繁體字形</option>
+                  <option value="t2s">t2s：繁體轉簡體</option>
+                </select>
+              </div>
+              <div class="field-box">
+                <label for="convert-font-name">自訂輸出字型家族名稱（選填）</label>
+                <input id="convert-font-name" name="font_name" type="text" maxlength="120" placeholder="留空則自動讀取原字型名稱並標註 TC">
+              </div>
+            </div>
+
+            <div class="field-box">
+              <span class="field-group-label">常用編譯選項</span>
+              <div class="toggle-grid">
+                <label class="toggle-chip">
+                  <input type="checkbox" name="no_punc" value="true" checked data-preview-nopunc>
+                  <span>排除標點與非漢字轉換 (no_punc)</span>
+                </label>
+                <label class="toggle-chip">
+                  <input type="checkbox" name="force_vertical" value="true">
+                  <span>強制直排標點替換 (force_vertical)</span>
+                </label>
+                <label class="toggle-chip">
+                  <input type="checkbox" name="output_woff2" value="true">
+                  <span>同時輸出 WOFF2 網頁字型 (woff2)</span>
+                </label>
+                <label class="toggle-chip">
+                  <input type="checkbox" name="kobo_mode" value="true">
+                  <span>Kobo 相容純 ASCII 命名 (kobo)</span>
+                </label>
+              </div>
+            </div>
+
+            <details class="advanced-panel">
+              <summary>進階選項：備用字型缺字補全（Fallback Font）、TTC 索引、版本與 JSON 命名</summary>
+              <div class="advanced-body">
+                <div class="dropzone dropzone-compact" data-drop="convert-fallback">
+                  <input id="convert-fallback-input" name="fallback_font" type="file" accept=".ttf,.otf,.ttc,.woff2" class="sr-only">
+                  <div class="dropzone-info">
+                    <strong>備用字型檔（選填，fallback_font）</strong>
+                    <p id="convert-fallback-label">當來源字型缺少對應繁體/異體字形時，從備用字型抽字補齊</p>
+                  </div>
+                  <div class="dropzone-actions">
+                    <label for="convert-fallback-input" class="btn-outline">選擇備用字型</label>
+                    <button type="button" class="btn-clear" data-clear="convert-fallback" hidden>清除</button>
+                  </div>
+                </div>
+
+                <div class="field-grid-2">
+                  <div class="field-box">
+                    <label for="convert-merge-mode">補字合併模式 (merge_mode)</label>
+                    <select id="convert-merge-mode" name="merge_mode">
+                      <option value="opencc">opencc：僅補轉換規則所需目標字（預設）</option>
+                      <option value="universal">universal：保留來源字庫並補齊缺字</option>
+                    </select>
+                  </div>
+                  <div class="field-box">
+                    <label for="convert-fill-charset">主動補字字集 (fill_charset)</label>
+                    <select id="convert-fill-charset" name="fill_charset">
+                      <option value="none">none：不主動預補字集</option>
+                      <option value="hant-common">hant-common：補入 OpenCC 常用繁中字集</option>
+                      <option value="opencc-hant">opencc-hant：完整 OpenCC 繁體映射字集</option>
+                      <option value="han">han：完整漢字字區</option>
+                    </select>
+                  </div>
+                </div>
+
+                <div class="field-grid-3">
+                  <div class="field-box">
+                    <label for="convert-ttc-index">TTC 字型索引</label>
+                    <input id="convert-ttc-index" name="ttc_index" type="number" min="0" step="1" placeholder="僅 .ttc 需要，自 0 起算">
+                  </div>
+                  <div class="field-box">
+                    <label for="convert-font-version">字型版本號 (font_version)</label>
+                    <input id="convert-font-version" name="font_version" type="number" min="0" step="0.1" placeholder="留空保留原版本">
+                  </div>
+                  <div class="field-box">
+                    <label for="convert-name-json">名稱標頭 JSON（選填）</label>
+                    <input id="convert-name-json" name="name_header_file" type="file" accept=".json">
+                  </div>
+                </div>
+              </div>
+            </details>
+          </form>
+
+          <!-- MODE 2: rotate90 -->
+          <form id="form-rotate90" class="mode-form" data-mode="rotate90" hidden>
+            <div class="dropzone" data-drop="rotate-source">
+              <input id="rotate-source-input" name="source_font" type="file" accept=".ttf,.otf,.ttc" class="sr-only">
+              <div class="dropzone-info">
+                <strong>來源字型檔（必填，.ttf / .otf / .ttc）</strong>
+                <p id="rotate-source-label">將漢字與注音字形旋轉 90° 並鎖定字寬度量，適用電子書直排渲染器</p>
+              </div>
+              <div class="dropzone-actions">
+                <label for="rotate-source-input" class="btn-outline">選擇字型</label>
+                <button type="button" class="btn-clear" data-clear="rotate-source" hidden>清除</button>
+              </div>
+            </div>
+
+            <div class="field-grid-2">
+              <div class="field-box">
+                <label for="rotate-direction">旋轉方向</label>
+                <select id="rotate-direction" name="direction">
+                  <option value="ccw">ccw：逆時針旋轉 90°（常用直排轉橫向檢視，預設）</option>
+                  <option value="cw">cw：順時針旋轉 90°（Rotated90）</option>
+                </select>
+              </div>
+              <div class="field-box">
+                <label for="rotate-ttc-index">TTC 字型索引（選填）</label>
+                <input id="rotate-ttc-index" name="ttc_index" type="number" min="0" step="1" placeholder="僅 .ttc 檔案需要">
+              </div>
+            </div>
+
+            <div class="field-box">
+              <span class="field-group-label">旋轉範圍與相容設定</span>
+              <div class="toggle-grid">
+                <label class="toggle-chip">
+                  <input type="checkbox" name="rotate_all" value="true">
+                  <span>旋轉全部字形（不限於漢字與注音符號）</span>
+                </label>
+                <label class="toggle-chip">
+                  <input type="checkbox" name="kobo_mode" value="true">
+                  <span>套用 Kobo 純 ASCII 名稱相容修正</span>
+                </label>
+              </div>
+            </div>
+          </form>
+
+          <!-- MODE 3: webfont -->
+          <form id="form-webfont" class="mode-form" data-mode="webfont" hidden>
+            <div class="dropzone" data-drop="webfont-source">
+              <input id="webfont-source-input" name="source_font" type="file" accept=".ttf,.otf" class="sr-only">
+              <div class="dropzone-info">
+                <strong>來源字型檔（必填，.ttf / .otf）</strong>
+                <p id="webfont-source-label">壓縮為高壓縮率 .woff2 並自動產生含 @font-face 的 fonts.css，打包為 ZIP</p>
+              </div>
+              <div class="dropzone-actions">
+                <label for="webfont-source-input" class="btn-outline">選擇字型</label>
+                <button type="button" class="btn-clear" data-clear="webfont-source" hidden>清除</button>
+              </div>
+            </div>
+
+            <div class="field-box">
+              <label for="webfont-family">CSS @font-face font-family 名稱（選填）</label>
+              <input id="webfont-family" name="font_family" type="text" maxlength="120" placeholder="留空則使用檔案主檔名">
+            </div>
+          </form>
+
+          <!-- MODE 4: static-family -->
+          <form id="form-static-family" class="mode-form" data-mode="static-family" hidden>
+            <div class="dropzone" data-drop="static-sources">
+              <input id="static-sources-input" name="source_files" type="file" multiple accept=".ttf,.otf,.ttc,.woff2,.zip" class="sr-only">
+              <div class="dropzone-info">
+                <strong>來源靜態多字重字型群（可複選檔案或上傳單一 .zip）</strong>
+                <p id="static-sources-label">支援 Regular / Medium / Bold 等多個字重同時批次編譯並打包為 ZIP</p>
+              </div>
+              <div class="dropzone-actions">
+                <label for="static-sources-input" class="btn-outline">選擇多檔 / ZIP</label>
+                <button type="button" class="btn-clear" data-clear="static-sources" hidden>清除</button>
+              </div>
+            </div>
+
+            <div class="dropzone dropzone-compact" data-drop="static-fallbacks">
+              <input id="static-fallbacks-input" name="fallback_files" type="file" multiple accept=".ttf,.otf,.ttc,.woff2,.zip" class="sr-only">
+              <div class="dropzone-info">
+                <strong>對應字重備用字型群（選填，可複選檔案或 .zip）</strong>
+                <p id="static-fallbacks-label">系統會依檔名中的字重（Thin~Black）自動配對每個來源字重進行補字</p>
+              </div>
+              <div class="dropzone-actions">
+                <label for="static-fallbacks-input" class="btn-outline">選擇備用字型群</label>
+                <button type="button" class="btn-clear" data-clear="static-fallbacks" hidden>清除</button>
+              </div>
+            </div>
+
+            <div class="field-grid-2">
+              <div class="field-box">
+                <label for="static-config">OpenCC 轉換標準</label>
+                <select id="static-config" name="config" data-preview-config>
+                  <option value="s2t">s2t：簡體轉繁體</option>
+                  <option value="twp">twp：繁體 + 台灣慣用語</option>
+                  <option value="s2tw">s2tw：簡體轉台灣正體</option>
+                  <option value="s2hk">s2hk：簡體轉香港繁體</option>
+                  <option value="t2s">t2s：繁體轉簡體</option>
+                </select>
+              </div>
+              <div class="field-box">
+                <label for="static-family-prefix">統一輸出家族前綴名稱（選填）</label>
+                <input id="static-family-prefix" name="family_name_prefix" type="text" maxlength="100" placeholder="例如：888LXGW（會自動加上字重）">
+              </div>
+            </div>
+
+            <div class="field-grid-3">
+              <div class="field-box">
+                <label for="static-fallback-prefix">備用字型檔名前綴篩選</label>
+                <input id="static-fallback-prefix" name="fallback_prefix" type="text" maxlength="80" placeholder="例如：NotoSansTC">
+              </div>
+              <div class="field-box">
+                <label for="static-merge-mode">補字合併模式</label>
+                <select id="static-merge-mode" name="merge_mode">
+                  <option value="universal">universal：保留原字庫並補缺字（預設）</option>
+                  <option value="opencc">opencc：僅補轉換目標字</option>
+                </select>
+              </div>
+              <div class="field-box">
+                <label for="static-fill-charset">主動補字字集</label>
+                <select id="static-fill-charset" name="fill_charset">
+                  <option value="hant-common">hant-common（預設）</option>
+                  <option value="opencc-hant">opencc-hant</option>
+                  <option value="han">han</option>
+                  <option value="none">none</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="field-box">
+              <span class="field-group-label">家族輸出選項</span>
+              <div class="toggle-grid">
+                <label class="toggle-chip">
+                  <input type="checkbox" name="no_punc" value="true" data-preview-nopunc>
+                  <span>排除標點轉換 (no_punc)</span>
+                </label>
+                <label class="toggle-chip">
+                  <input type="checkbox" name="force_vertical" value="true">
+                  <span>強制直排標點</span>
+                </label>
+                <label class="toggle-chip">
+                  <input type="checkbox" name="output_woff2" value="true">
+                  <span>同時輸出 WOFF2</span>
+                </label>
+                <label class="toggle-chip">
+                  <input type="checkbox" name="kobo_mode" value="true">
+                  <span>Kobo 相容命名</span>
+                </label>
+              </div>
+            </div>
+          </form>
+
+          <!-- MODE 5: variable-family -->
+          <form id="form-variable-family" class="mode-form" data-mode="variable-family" hidden>
+            <div class="dropzone" data-drop="vf-source">
+              <input id="vf-source-input" name="source_font" type="file" accept=".ttf,.otf" class="sr-only">
+              <div class="dropzone-info">
+                <strong>可變字型主檔（必填，需包含 fvar / wght 軸）</strong>
+                <p id="vf-source-label">將依所選字重切出靜態實例後進行 OpenCC 編譯與缺字合併</p>
+              </div>
+              <div class="dropzone-actions">
+                <label for="vf-source-input" class="btn-outline">選擇可變字型</label>
+                <button type="button" class="btn-clear" data-clear="vf-source" hidden>清除</button>
+              </div>
+            </div>
+
+            <div class="dropzone dropzone-compact" data-drop="vf-fallbacks">
+              <input id="vf-fallbacks-input" name="fallback_files" type="file" multiple accept=".ttf,.otf,.zip" class="sr-only">
+              <div class="dropzone-info">
+                <strong>備用字重字型群（必填，可複選檔案或 .zip）</strong>
+                <p id="vf-fallbacks-label">需包含所選字重對應檔案（例如 NotoSansTC-Regular.ttf、NotoSansTC-Bold.ttf）</p>
+              </div>
+              <div class="dropzone-actions">
+                <label for="vf-fallbacks-input" class="btn-outline">選擇備用字型群</label>
+                <button type="button" class="btn-clear" data-clear="vf-fallbacks" hidden>清除</button>
+              </div>
+            </div>
+
+            <div class="field-grid-3">
+              <div class="field-box">
+                <label for="vf-config">OpenCC 轉換標準</label>
+                <select id="vf-config" name="config" data-preview-config>
+                  <option value="s2t">s2t：簡體轉繁體</option>
+                  <option value="twp">twp：繁體 + 台灣慣用語</option>
+                  <option value="s2tw">s2tw：簡體轉台灣正體</option>
+                  <option value="s2hk">s2hk：簡體轉香港繁體</option>
+                  <option value="t2s">t2s：繁體轉簡體</option>
+                </select>
+              </div>
+              <div class="field-box">
+                <label for="vf-fallback-prefix">備用字型檔名前綴</label>
+                <input id="vf-fallback-prefix" name="fallback_prefix" type="text" maxlength="80" value="NotoSansTC">
+              </div>
+              <div class="field-box">
+                <label for="vf-family-prefix">輸出家族名稱前綴（選填）</label>
+                <input id="vf-family-prefix" name="family_name_prefix" type="text" maxlength="100" placeholder="例如：888SansTC">
+              </div>
+            </div>
+
+            <div class="field-box">
+              <span class="field-group-label">要生成的目標字重（未勾選表示依預設全部字重）</span>
+              <div class="weights-grid" id="vf-weights-grid">
+                <label class="weight-pill"><input type="checkbox" value="Thin"><span>Thin (100)</span></label>
+                <label class="weight-pill"><input type="checkbox" value="ExtraLight"><span>ExtraLight (200)</span></label>
+                <label class="weight-pill"><input type="checkbox" value="Light"><span>Light (300)</span></label>
+                <label class="weight-pill"><input type="checkbox" value="Regular" checked><span>Regular (400)</span></label>
+                <label class="weight-pill"><input type="checkbox" value="Medium"><span>Medium (500)</span></label>
+                <label class="weight-pill"><input type="checkbox" value="SemiBold"><span>SemiBold (600)</span></label>
+                <label class="weight-pill"><input type="checkbox" value="Bold" checked><span>Bold (700)</span></label>
+                <label class="weight-pill"><input type="checkbox" value="ExtraBold"><span>ExtraBold (800)</span></label>
+                <label class="weight-pill"><input type="checkbox" value="Black"><span>Black (900)</span></label>
+              </div>
+            </div>
+
+            <div class="field-box">
+              <div class="toggle-grid">
+                <label class="toggle-chip">
+                  <input type="checkbox" name="output_woff2" value="true">
+                  <span>同時輸出 WOFF2</span>
+                </label>
+                <label class="toggle-chip">
+                  <input type="checkbox" name="kobo_mode" value="true">
+                  <span>Kobo 相容命名</span>
+                </label>
+              </div>
+            </div>
+          </form>
+
+          <details class="api-snippet-box">
+            <summary>檢視與複製對應 REST API cURL 指令</summary>
+            <div class="snippet-inner">
+              <pre id="curl-preview"></pre>
+              <button type="button" id="copy-curl-btn" class="btn-outline btn-sm">複製 cURL</button>
+            </div>
+          </details>
+
+          <div id="form-feedback" class="form-feedback" role="alert" hidden></div>
+
+          <div class="submit-bar">
+            <div class="submit-meta">
+              <div id="upload-progress-wrap" class="upload-progress-wrap" hidden>
+                <span id="upload-progress-text">上傳中 0%</span>
+                <div class="hairline-track"><div id="upload-progress-fill" class="hairline-fill"></div></div>
+              </div>
+              <span id="submit-hint">提交後任務將進入背景 Worker 佇列，完成檔案保留於伺服器 TTL 期內供下載</span>
+            </div>
+            <button type="button" id="submit-btn" class="btn-primary">送出轉換任務</button>
+          </div>
+        </main>
+
+        <aside class="queue-pane" aria-label="背景任務佇列與編譯紀錄">
+          <div class="queue-header">
+            <h2>任務佇列與編譯紀錄</h2>
+            <button type="button" id="clear-history-btn" class="text-btn">清除已完成紀錄</button>
+          </div>
+
+          <div id="queue-empty" class="queue-empty">
+            <div class="empty-title">目前尚無本機任務紀錄</div>
+            <p>大型 CJK 字型透過 <code>otfccdump</code> 與 <code>otfccbuild</code> 編譯約需 15 至 60 秒。提交任務後，此處會即時顯示排隊順序、階段進度、Worker 編譯日誌與下載連結。</p>
+          </div>
+
+          <div id="job-list" class="job-list"></div>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js" type="module"></script>
+</body>
+</html>

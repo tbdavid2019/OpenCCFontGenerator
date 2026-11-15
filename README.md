@@ -457,6 +457,61 @@ python -m OpenCCFontGenerator \
 
 ---
 
+## Web 工作台、REST API 與 Docker 部署 / Web UI, API & Docker Deployment
+
+除了 CLI 與互動式精靈腳本外，本專案現在也提供單一容器的 **FastAPI Web 工作台與非同步 REST API**，可直接部署到伺服器上對大眾提供網頁端與 API 服務：
+
+### 主要功能
+
+- **完整網頁工作台（`/`）**：涵蓋 5 種工作模式（單一字型簡繁轉換與備用字型補字、90° 直排旋轉、Webfont WOFF2 + CSS 打包、靜態字型家族批次處理、可變字型家族實例化），並於畫面上方提供「即時 OpenCC 詞彙對照預覽條」。
+- **非同步背景任務佇列 + 編譯日誌**：因為大型 CJK 字型透過 `otfccdump` / `otfccbuild` 編譯約需 15–60 秒，每次任務會配發獨立暫存工作目錄與隔離的 Subprocess Worker 執行（結束後立即釋放記憶體並清除暫存），前端可輪詢排隊序號、階段進度與即時日誌。
+- **OpenAPI 自動化文件（`/docs` 與 `/redoc`）**：內建 Swagger UI，所有端點皆支援以 `curl` 或任意 HTTP 客戶端呼叫：
+  - `GET /healthz`：檢查 `otfccdump` / `otfccbuild` 與 OpenCC `1.4.2` 快取狀態
+  - `GET /api/v1/capabilities`：查詢目前伺服器資源限制與並行佇列負載
+  - `GET /api/v1/preview`：即時依 OpenCC 編譯詞表計算試轉預覽
+  - `POST /api/v1/jobs/convert`：單一字型轉換（含可選備用字型、TTC 索引、JSON 命名、`force_vertical`、`kobo`、`woff2`）
+  - `POST /api/v1/jobs/rotate90`：90° 直排旋轉
+  - `POST /api/v1/jobs/webfont`：WOFF2 + `fonts.css` ZIP 打包
+  - `POST /api/v1/jobs/static-family`：多字重靜態家族批次（支援多檔或 ZIP 上傳）
+  - `POST /api/v1/jobs/variable-family`：可變字型多字重展開與補字家族批次
+  - `GET /api/v1/jobs/{job_id}` / `GET /api/v1/jobs/{job_id}/download` / `DELETE /api/v1/jobs/{job_id}`
+- **公開對外安全防護**：提供單檔上傳上限、單次請求總容量上限、ZIP 壓縮彈 / Zip-Slip 路徑遍歷防護、最大並行 Worker 數、排隊上限、依 IP 滑動視窗速率限制（支援反代 `X-Forwarded-For`）與自動 TTL 過期清理。
+
+### 使用 Docker Compose 一鍵部署（推薦）
+
+> ⚠️ 由於上游 `otfcc` (`v0.10.4`) 官方預編譯檔僅提供 Linux `x86_64`，[Dockerfile](Dockerfile) 與 [docker-compose.yml](docker-compose.yml) 已設定為 `linux/amd64` 並在建置階段預先安裝 `otfcc` 與建置 `OpenCC 1.4.2` 快取。
+
+```bash
+docker compose up -d --build
+```
+
+啟動後即可訪問：
+- Web 工作台：`http://localhost:8000/`
+- API Swagger 文件：`http://localhost:8000/docs`
+- 健康檢查：`http://localhost:8000/healthz`
+
+可透過環境變數自訂伺服器資源限制（詳見 [docker-compose.yml](docker-compose.yml)）：
+- `OPENCC_WEB_MAX_FILE_MB`（預設 `80`）
+- `OPENCC_WEB_MAX_TOTAL_UPLOAD_MB`（預設 `240`）
+- `OPENCC_WEB_MAX_EXTRACTED_MB`（預設 `320`，單次請求所有 ZIP 合計解壓上限）
+- `OPENCC_WEB_MAX_CONCURRENT_JOBS`（預設 `2`）
+- `OPENCC_WEB_MAX_QUEUED_JOBS`（預設 `20`）
+- `OPENCC_WEB_RATE_LIMIT_PER_MIN`（預設 `12`，設為 `0` 可停用限流）
+- `OPENCC_WEB_TRUST_PROXY_HEADERS`（預設 `false`；若位於 Nginx / Caddy 後方，建議設為 `true` 並於 `OPENCC_WEB_TRUSTED_PROXIES` 填入反代 IP/CIDR 白名單）
+- `OPENCC_WEB_JOB_TTL_SECONDS`（預設 `7200`，即完成後保留 2 小時自動刪除任務檔）
+- `OPENCC_WEB_JOB_TIMEOUT_SECONDS`（預設 `600`）
+
+> 若部署於 Nginx / Caddy 等反向代理後方，建議將反代的上傳限制調大（例如 Nginx 設定 `client_max_body_size 250M;`），並啟用 `OPENCC_WEB_TRUST_PROXY_HEADERS=true` 與 `OPENCC_WEB_TRUSTED_PROXIES`。
+
+### 本機直接啟動 Web 服務（開發 / 測試用）
+
+```bash
+pip install -r requirements.txt -r requirements-web.txt
+PYTHONPATH=src python -m OpenCCFontGenerator.web
+```
+
+---
+
 ## 詞庫維護與升級指引 / OpenCC Dictionary Maintenance & Upgrades
 
 本專案目前對齊上游 `BYVoid/OpenCC` **`1.4.2`**（`opencc>=1.4.2` 與 `opencc-data@1.4.2`）：

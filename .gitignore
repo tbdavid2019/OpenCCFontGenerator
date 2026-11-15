@@ -19,6 +19,7 @@ __pycache__/
 .claude/
 .codex/
 .gemini/
+.impeccable/
 .kilocode/
 .opencode/
 .DS_Store

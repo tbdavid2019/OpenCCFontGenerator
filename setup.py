@@ -299,7 +299,7 @@ setup(
     packages=find_packages('src'),
     package_dir={'': 'src'},
     package_data={
-        'OpenCCFontGenerator': ['cache/*', 'opencc_data/*', 'extra_convert_table.txt', 't2twp.json'],
+        'OpenCCFontGenerator': ['cache/*', 'opencc_data/*', 'extra_convert_table.txt', 't2twp.json', 'web/static/*'],
     },
     include_package_data=True,
     python_requires='>=3.8, <4',

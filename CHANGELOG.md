@@ -8,6 +8,23 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ### Added
 
+#### 新增 FastAPI Web 工作台、非同步 REST API 與 Docker 部署架構
+- **新增 Web / API 服務模組 `src/OpenCCFontGenerator/web/`**：
+  - 建立 [config.py](src/OpenCCFontGenerator/web/config.py)、[rate_limit.py](src/OpenCCFontGenerator/web/rate_limit.py)、[schemas.py](src/OpenCCFontGenerator/web/schemas.py)、[preview.py](src/OpenCCFontGenerator/web/preview.py)、[worker.py](src/OpenCCFontGenerator/web/worker.py)、[jobs.py](src/OpenCCFontGenerator/web/jobs.py)、[app.py](src/OpenCCFontGenerator/web/app.py) 與 [__main__.py](src/OpenCCFontGenerator/web/__main__.py)。
+  - 完整支援五大字型流程：`convert`（單一字型簡繁轉換 + Fallback 補字 + WOFF2 + Kobo）、`rotate90`、`webfont`、`static-family` 與 `variable-family`，支援多檔及 `.zip` 壓縮包上傳與批次輸出打包。
+  - 每個編譯任務於獨立隔離目錄與獨立 Subprocess Worker 中執行（確保 `opencc_gen_debug.log` 不互撞且結束後立即釋放 CJK 字型編譯記憶體），並提供單檔／總容量上限、ZIP Zip-Slip／壓縮彈防護、滑動視窗 IP 速率限制、佇列並發控管與背景 TTL 自動清除機制。
+  - 提供 `/healthz`、`/api/v1/capabilities`、`/api/v1/preview`、`/api/v1/jobs/*` 及內建 Swagger UI（`/docs`）/ ReDoc（`/redoc`）。
+- **新增響應式 Web 工作台前端（`src/OpenCCFontGenerator/web/static/`）**：
+  - 實作「CJK 字體見本帳工作台」介面（[index.html](src/OpenCCFontGenerator/web/static/index.html)、[styles.css](src/OpenCCFontGenerator/web/static/styles.css)、[app.js](src/OpenCCFontGenerator/web/static/app.js)、[favicon.svg](src/OpenCCFontGenerator/web/static/favicon.svg)），包含即時 OpenCC 轉換見本條、拖曳上傳與即時上傳進度、cURL API 指令即時生成，以及具 `localStorage` 追蹤能力的非同步任務日誌佇列。
+- **新增 Docker 單容器建置與生產部署檔**：
+  - 新增 [requirements-web.txt](requirements-web.txt)、[Dockerfile](Dockerfile)（基於 `linux/amd64` `python:3.12-slim`，建置期預載 `otfcc` v0.10.4 與編譯 `OpenCC 1.4.2` 快取、非 root 使用者執行與 `HEALTHCHECK`）、[.dockerignore](.dockerignore) 與 [docker-compose.yml](docker-compose.yml)。
+  - 更新 [setup.py](setup.py) `package_data` 納入 `web/static/*`，更新 [README.md](README.md) 補充 Web / API / Docker 部署文件，並紀錄 [PRODUCT.md](PRODUCT.md) 與 [DESIGN.md](DESIGN.md)。
+- **新增 Web / API 整合測試 `tests/test_web_api.py`**：涵蓋健康檢查（含 `503` 降級回應）、即時預覽對照表、速率限制、反代 IP 鏈驗證、Pre-multipart 上傳大小攔截、ZIP 共享解壓預算與目錄穿越防護、佇列插槽預留，以及 `webfont`、`convert`、`rotate90`、`static-family` 非同步 Worker 端到端生命週期（未安裝可選 Web 依賴時優雅略過）。
+- **依據多方 Code Review（Codex CLI / OMP CLI / OpenCode CLI）進行安全性與強健性加固**：
+  - [config.py](src/OpenCCFontGenerator/web/config.py)、[app.py](src/OpenCCFontGenerator/web/app.py)、[__main__.py](src/OpenCCFontGenerator/web/__main__.py)：預設關閉 `OPENCC_WEB_TRUST_PROXY_HEADERS`，新增 `OPENCC_WEB_TRUSTED_PROXIES` 可信反代 CIDR／右向左代理鏈驗證，並以純 ASGI `UploadGuardMiddleware` 於 Starlette 解析 Multipart 前直接執行 IP 速率限制與請求體大小攔截（防暫存碟耗盡）；強化 `_env_int()` 容錯、補齊 Python 3.8+ `typing` 相容性、防禦 `fallback_prefix` 路徑穿越並於 [vf_family.py](src/OpenCCFontGenerator/vf_family.py) 內驗證目標路徑，`/healthz` 異常時改回傳 HTTP `503`。
+  - [jobs.py](src/OpenCCFontGenerator/web/jobs.py)、[worker.py](src/OpenCCFontGenerator/web/worker.py)、[rate_limit.py](src/OpenCCFontGenerator/web/rate_limit.py)、[preview.py](src/OpenCCFontGenerator/web/preview.py)：加入請求級共享 `ZipExtractionBudget` 與非同步執行緒解壓、原子化佇列插槽預留與中斷殘留目錄清理、POSIX `start_new_session` / `os.killpg` 整組子行程（含 `otfcc`）超時／取消回收、`32 KiB` 分段尾端 Log 讀取、完成時間起算 TTL 與快取強化。
+  - 前端與部署（[index.html](src/OpenCCFontGenerator/web/static/index.html)、[styles.css](src/OpenCCFontGenerator/web/static/styles.css)、[app.js](src/OpenCCFontGenerator/web/static/app.js)、[Dockerfile](Dockerfile)、[docker-compose.yml](docker-compose.yml)）：補齊行動端抽屜 `inert` 管理與鍵盤焦點指示、`aria-current` 與即時狀態 `role="status"`、`AbortController` 過時預覽請求取消、cURL 單引號安全跳脫、輪詢斷線指數退避重試，以及 Docker `mem_limit` / `cpus` / `pids_limit` / `no-new-privileges` 資源與權限上限。
+
 #### 新增 OpenCC 詞庫與版本升級 Skill（`opencc-dict-upgrade`）
 - **新增專案 Skill `.agents/skills/opencc-dict-upgrade/SKILL.md`**：系統化整理對齊上游 `BYVoid/OpenCC` 與 `opencc-data` 的升級步驟、必守建表不變量（單字異體表防反推污染、`k == v` guard 剪枝、`.cache_version` 雙戳記、`t2twp.json` schema 驗證）與發佈前驗證清單。
 - **新增驗證腳本 `.agents/skills/opencc-dict-upgrade/scripts/verify_opencc_upgrade.py`**：可一鍵檢查版本戳記、5 組快取詞表完整性與（於 macOS 指定 `--font` 時）`build_font` glyph 上限及 CoreText 塑形結果。

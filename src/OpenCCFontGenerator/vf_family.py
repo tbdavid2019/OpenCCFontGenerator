@@ -43,14 +43,19 @@ def instantiate_variable_font(input_file, output_file, axis_values):
 
 
 def find_fallback_for_weight(fallback_dir, fallback_prefix, weight_name):
+    safe_prefix = sanitize_filename_part(fallback_prefix or "")
+    base_dir = os.path.abspath(fallback_dir)
     candidates = [
-        path.join(fallback_dir, f"{fallback_prefix}-{weight_name}.ttf"),
-        path.join(fallback_dir, f"{fallback_prefix}-{weight_name}.otf"),
+        path.join(base_dir, f"{safe_prefix}-{weight_name}.ttf"),
+        path.join(base_dir, f"{safe_prefix}-{weight_name}.otf"),
     ]
     for candidate in candidates:
-        if path.isfile(candidate):
-            return candidate
-    raise FileNotFoundError(f"找不到對應權重的 fallback 字型：{fallback_prefix}-{weight_name}.ttf/.otf")
+        resolved = os.path.abspath(candidate)
+        if os.path.commonpath([resolved, base_dir]) != base_dir:
+            continue
+        if path.isfile(resolved):
+            return resolved
+    raise FileNotFoundError(f"找不到對應權重的 fallback 字型：{safe_prefix}-{weight_name}.ttf/.otf")
 
 
 def sanitize_filename_part(value):
