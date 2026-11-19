@@ -16,8 +16,26 @@ def load_font_json(path, ttc_index=None):
 def save_font_json(obj, output_path):
     '''Save a font object to file via otfccbuild.'''
     print(f"Saving font via otfccbuild: {output_path}")
-    subprocess.run(('otfccbuild', '-o', output_path),
-                   input=json.dumps(obj), encoding='utf-8')
+    output_dir = os.path.dirname(os.path.abspath(output_path))
+    os.makedirs(output_dir, exist_ok=True)
+    suffix = os.path.splitext(output_path)[1] or '.ttf'
+    fd, built_path = tempfile.mkstemp(dir=output_dir, suffix=suffix)
+    os.close(fd)
+    os.remove(built_path)
+
+    try:
+        subprocess.run(
+            ('otfccbuild', '-o', built_path),
+            input=json.dumps(obj),
+            encoding='utf-8',
+            check=True,
+        )
+        if not os.path.isfile(built_path) or os.path.getsize(built_path) == 0:
+            raise RuntimeError(f"otfccbuild did not produce a valid output file: {output_path}")
+        os.replace(built_path, output_path)
+    finally:
+        if os.path.exists(built_path):
+            os.remove(built_path)
 
 def rotate_glyph_90(glyph, center_x=500, center_y=500, direction='cw'):
     '''Rotate a single glyph 90 degrees around (center_x, center_y).'''

@@ -7,6 +7,9 @@ import unittest
 from unittest import mock
 
 from OpenCCFontGenerator import font as font_module
+from OpenCCFontGenerator import run90 as run90_module
+from OpenCCFontGenerator import static_family as static_family_module
+from OpenCCFontGenerator import webfont as webfont_module
 
 
 class FakeCFF:
@@ -349,6 +352,65 @@ class OpenCCGsubAndVariantTests(unittest.TestCase):
         self.assertNotIn('g_ext_b', out['glyf'])
         self.assertLessEqual(len(out['glyph_order']), 6)
         self.assertIn('pseu0', out['glyf'])
+
+
+class PreDeployFixTests(unittest.TestCase):
+    def test_variant_dictionaries_exist(self):
+        data_dir = Path(font_module.HERE) / 'opencc_data'
+        for filename in ('Variants.txt', 'Var_tw.txt', 'Var_hk.txt'):
+            self.assertTrue((data_dir / filename).is_file(), f'Missing variant table: {filename}')
+
+    def test_static_family_preserves_cjk_fixes_extensions_and_deduplicates(self):
+        self.assertEqual(static_family_module.sanitize_filename_part('思源黑體-Regular'), '思源黑體-Regular')
+        self.assertEqual(static_family_module.sanitize_filename_part('../../bad..name'), 'bad_name')
+
+        with tempfile.TemporaryDirectory() as directory:
+            src_dir = Path(directory) / 'src'
+            out_dir = Path(directory) / 'out'
+            src_dir.mkdir()
+            for fname in ('思源.ttf', '思源.woff2', '字型.ttc'):
+                (src_dir / fname).write_bytes(b'dummy')
+
+            called_outputs = []
+
+            def fake_build_font(**kwargs):
+                called_outputs.append(Path(kwargs['output_file']).name)
+
+            with mock.patch.object(static_family_module, 'build_font', side_effect=fake_build_font):
+                results = static_family_module.build_static_cjk_family(str(src_dir), str(out_dir))
+
+            self.assertEqual(len(results), 3)
+            self.assertEqual(set(called_outputs), {'字型_TC.ttf', '思源_TC.ttf', '思源_2_TC.ttf'})
+            for name in called_outputs:
+                self.assertTrue(name.endswith('.ttf'))
+
+    def test_run90_save_font_json_raises_on_error_without_leaving_broken_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out_path = Path(directory) / 'rotated.ttf'
+            out_path.write_bytes(b'original-font')
+
+            err = subprocess.CalledProcessError(1, ('otfccbuild',))
+            with mock.patch.object(run90_module.subprocess, 'run', side_effect=err):
+                with self.assertRaises(subprocess.CalledProcessError):
+                    run90_module.save_font_json({'cmap': {}}, str(out_path))
+            self.assertEqual(out_path.read_bytes(), b'original-font')
+
+            missing_out = Path(directory) / 'missing_out.ttf'
+            with mock.patch.object(run90_module.subprocess, 'run', return_value=subprocess.CompletedProcess(('otfccbuild',), 0)):
+                with self.assertRaises(RuntimeError):
+                    run90_module.save_font_json({'cmap': {}}, str(missing_out))
+            self.assertFalse(missing_out.exists())
+            self.assertEqual([p.name for p in Path(directory).iterdir()], ['rotated.ttf'])
+
+    def test_webfont_generate_css_template_escapes_special_chars(self):
+        normal_css = webfont_module.generate_css_template('/tmp/MiniSpecimen.woff2', 'MiniSpecimen')
+        self.assertIn("font-family: 'MiniSpecimen';", normal_css)
+        self.assertIn("src: url('MiniSpecimen.woff2') format('woff2');", normal_css)
+
+        tricky_css = webfont_module.generate_css_template("/tmp/a'b.woff2", "Bad'Font\\x\n*/body{}")
+        self.assertIn("font-family: 'Bad\\'Font\\\\x *\\/body{}';", tricky_css)
+        self.assertIn("src: url('a\\'b.woff2') format('woff2');", tricky_css)
+        self.assertNotIn("*/body{}", tricky_css)
 
 
 if __name__ == '__main__':

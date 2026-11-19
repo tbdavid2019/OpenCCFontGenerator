@@ -17,6 +17,7 @@ import sys
 import threading
 import time
 from typing import Dict, List, Optional, Set, Tuple
+from urllib.parse import quote
 import uuid
 import zipfile
 
@@ -605,7 +606,7 @@ class JobManager:
         artifacts = [
             {
                 **art,
-                'download_url': f"/api/v1/jobs/{job_id}/artifacts/{art['filename']}",
+                'download_url': f"/api/v1/jobs/{job_id}/artifacts/{quote(art['filename'], safe='')}",
             }
             for art in record.get('artifacts', [])
         ]

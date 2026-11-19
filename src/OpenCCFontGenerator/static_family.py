@@ -21,7 +21,16 @@ WEIGHT_ALIASES = {
 
 
 def sanitize_filename_part(value):
-    return re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_") or "Output"
+    cleaned = re.sub(r"[^A-Za-z0-9._\-\u4e00-\u9fff]+", "_", value or "")
+    cleaned = re.sub(r"\.{2,}", "_", cleaned).strip("._")
+    return cleaned or "Output"
+
+
+def _resolve_output_extension(ext):
+    lowered = (ext or "").lower()
+    if lowered in (".ttf", ".otf"):
+        return lowered
+    return ".ttf"
 
 
 def is_supported_font_file(filename):
@@ -111,11 +120,20 @@ def build_static_cjk_family(
 
     os.makedirs(output_dir, exist_ok=True)
     results = []
+    used_names = set()
 
     for source_file in source_files:
         base_name = path.basename(source_file)
         stem, ext = path.splitext(base_name)
-        output_file = path.join(output_dir, f"{sanitize_filename_part(stem)}_TC{ext}")
+        safe_stem = sanitize_filename_part(stem)
+        out_ext = _resolve_output_extension(ext)
+        candidate_name = f"{safe_stem}_TC{out_ext}"
+        idx = 2
+        while candidate_name.lower() in used_names:
+            candidate_name = f"{safe_stem}_{idx}_TC{out_ext}"
+            idx += 1
+        used_names.add(candidate_name.lower())
+        output_file = path.join(output_dir, candidate_name)
         fallback_font = find_fallback_for_source(source_file, fallback_candidates) if fallback_candidates else None
 
         build_font(

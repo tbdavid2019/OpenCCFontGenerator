@@ -6,21 +6,24 @@ services:
     platform: linux/amd64
     container_name: opencc-font-generator-web
     ports:
-      - "8000:8000"
+      # Tip: Set OPENCC_WEB_BIND_PORT=127.0.0.1:8000:8000 when running behind Nginx / Caddy / Cloudflare Tunnel
+      - "${OPENCC_WEB_BIND_PORT:-8000:8000}"
     environment:
       OPENCC_WEB_STORAGE_DIR: /data/jobs
       OPENCC_WEB_MAX_FILE_MB: "80"
       OPENCC_WEB_MAX_TOTAL_UPLOAD_MB: "240"
       OPENCC_WEB_MAX_EXTRACTED_MB: "320"
-      OPENCC_WEB_MAX_CONCURRENT_JOBS: "2"
+      # 1 worker is recommended with mem_limit: 4g (large CJK + fallback jobs can peak at 2.5-3.5 GB); raise mem_limit to 6g-8g for 2
+      OPENCC_WEB_MAX_CONCURRENT_JOBS: "${OPENCC_WEB_MAX_CONCURRENT_JOBS:-1}"
       OPENCC_WEB_MAX_QUEUED_JOBS: "20"
       OPENCC_WEB_JOB_TTL_SECONDS: "7200"
       OPENCC_WEB_JOB_TIMEOUT_SECONDS: "600"
       OPENCC_WEB_RATE_LIMIT_PER_MIN: "12"
       # Security default: keep false unless running behind a trusted reverse proxy and set OPENCC_WEB_TRUSTED_PROXIES
-      OPENCC_WEB_TRUST_PROXY_HEADERS: "false"
-      OPENCC_WEB_TRUSTED_PROXIES: ""
-      OPENCC_WEB_CORS_ORIGINS: "*"
+      OPENCC_WEB_TRUST_PROXY_HEADERS: "${OPENCC_WEB_TRUST_PROXY_HEADERS:-false}"
+      OPENCC_WEB_TRUSTED_PROXIES: "${OPENCC_WEB_TRUSTED_PROXIES:-}"
+      # Restrict to your production origin(s) (e.g. https://fonts.example.com) before public exposure
+      OPENCC_WEB_CORS_ORIGINS: "${OPENCC_WEB_CORS_ORIGINS:-*}"
     volumes:
       - opencc_font_jobs:/data/jobs
     mem_limit: 4g
@@ -29,7 +32,8 @@ services:
     security_opt:
       - no-new-privileges:true
     restart: unless-stopped
-    # Note: If placing behind Nginx / Caddy / Cloudflare, set client_max_body_size >= 250M
+    # Note: Keep Uvicorn single-process (workers=1) because JobManager and SlidingWindowRateLimiter hold state in memory.
+    # If placing behind Nginx / Caddy / Cloudflare, set client_max_body_size >= 250M
     # and proxy_read_timeout >= 300s (job submission returns 202 immediately, while big uploads may take ~30s).
 
 volumes:

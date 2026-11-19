@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from pathlib import Path
+import shutil
 import sys
 from typing import Dict, List, Optional
 import zipfile
@@ -57,6 +58,8 @@ def _register_outputs(outputs_dir: Path, candidates: List[Path], primary_path: P
             'kind': _classify_artifact(resolved.name),
             'primary': resolved == primary_path.resolve(),
         })
+    if not artifacts:
+        raise RuntimeError('字型任務未產生任何有效輸出檔案。')
     return artifacts
 
 
@@ -187,6 +190,7 @@ def _run_static_family(spec: dict, outputs_dir: Path, phase_file: Path) -> List[
 
     _update_phase(phase_file, 'packaging_bundle')
     bundle = _package_zip(outputs_dir / 'static_family_TC.zip', files, base_dir=batch_dir)
+    shutil.rmtree(batch_dir, ignore_errors=True)
     return _register_outputs(outputs_dir, [bundle], bundle)
 
 
@@ -214,6 +218,7 @@ def _run_variable_family(spec: dict, outputs_dir: Path, phase_file: Path) -> Lis
 
     _update_phase(phase_file, 'packaging_bundle')
     bundle = _package_zip(outputs_dir / 'variable_family_TC.zip', files, base_dir=batch_dir)
+    shutil.rmtree(batch_dir, ignore_errors=True)
     return _register_outputs(outputs_dir, [bundle], bundle)
 
 
@@ -237,7 +242,10 @@ def run_job_spec(spec_path: Path) -> int:
 
     os.chdir(job_dir)
     runner = MODE_RUNNERS[spec['mode']]
-    artifacts = runner(spec, outputs_dir, phase_file)
+    try:
+        artifacts = runner(spec, outputs_dir, phase_file)
+    finally:
+        shutil.rmtree(job_dir / 'inputs', ignore_errors=True)
     result_file.write_text(json.dumps({'artifacts': artifacts}, ensure_ascii=False, indent=2), encoding='utf-8')
     _update_phase(phase_file, 'completed')
     return 0

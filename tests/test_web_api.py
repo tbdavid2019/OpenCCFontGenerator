@@ -1,6 +1,8 @@
 """Tests for OpenCCFontGenerator Web UI, FastAPI endpoints, rate limits, and worker execution."""
 
 import io
+import json
+import os
 from pathlib import Path
 import shutil
 import tempfile
@@ -13,6 +15,7 @@ try:
     from fastapi.testclient import TestClient
     from fontTools.fontBuilder import FontBuilder
     from fontTools.pens.ttGlyphPen import TTGlyphPen
+    from OpenCCFontGenerator.web import worker as worker_module
     from OpenCCFontGenerator.web.app import _client_ip_from_scope, _parse_trusted_networks, create_app
     from OpenCCFontGenerator.web.config import WebSettings
     from OpenCCFontGenerator.web.jobs import JobManager, ZipExtractionBudget, extract_fonts_from_zip
@@ -383,6 +386,83 @@ class WebApiTests(unittest.TestCase):
             mgr.release_pending_job(jid2)
         finally:
             mgr.shutdown()
+
+    def test_worker_register_outputs_rejects_empty_and_cleans_intermediates(self):
+        with self.assertRaises(RuntimeError):
+            worker_module._register_outputs(
+                Path(self.tmpdir.name),
+                [Path(self.tmpdir.name) / 'nonexistent.ttf'],
+                Path(self.tmpdir.name) / 'nonexistent.ttf',
+            )
+
+        job_dir = Path(self.tmpdir.name) / 'job_cleanup'
+        inputs_dir = job_dir / 'inputs' / 'source'
+        outputs_dir = job_dir / 'outputs'
+        inputs_dir.mkdir(parents=True)
+        outputs_dir.mkdir(parents=True)
+        (inputs_dir / 'A.ttf').write_bytes(b'src')
+
+        spec_path = job_dir / 'spec.json'
+        spec_path.write_text(json.dumps({
+            'job_id': 'a1b2c3d4e5f6',
+            'mode': 'static-family',
+            'job_dir': str(job_dir),
+            'input_dir': str(inputs_dir),
+            'fallback_dir': None,
+            'params': {'config': 's2t'},
+        }), encoding='utf-8')
+
+        def fake_static_family(**kwargs):
+            out_file = Path(kwargs['output_dir']) / 'A_TC.ttf'
+            out_file.write_bytes(b'compiled-ttf')
+            return [{'output_file': str(out_file)}]
+
+        prev_cwd = os.getcwd()
+        try:
+            with patch.object(worker_module, 'build_static_cjk_family', side_effect=fake_static_family):
+                rc = worker_module.run_job_spec(spec_path)
+        finally:
+            os.chdir(prev_cwd)
+
+        self.assertEqual(rc, 0)
+        self.assertFalse((job_dir / 'inputs').exists())
+        self.assertFalse((outputs_dir / 'family_files').exists())
+        self.assertTrue((outputs_dir / 'static_family_TC.zip').is_file())
+        self.assertTrue((job_dir / 'result.json').is_file())
+
+    def test_non_ascii_artifact_download_url_encoded(self):
+        ttf_bytes = _build_minimal_ttf_bytes()
+        with TestClient(self.app) as client:
+            submit = client.post(
+                '/api/v1/jobs/webfont',
+                files={'source_font': ('測試字型.ttf', ttf_bytes, 'font/ttf')},
+                data={'font_family': 'TestCJK'},
+            )
+            self.assertEqual(submit.status_code, 202, submit.text)
+            job_id = submit.json()['job_id']
+
+            deadline = time.time() + 30
+            status_data = None
+            while time.time() < deadline:
+                status_data = client.get(f'/api/v1/jobs/{job_id}').json()
+                if status_data['status'] in ('completed', 'failed'):
+                    break
+                time.sleep(0.15)
+
+            self.assertEqual(status_data['status'], 'completed', status_data)
+            artifacts = status_data['artifacts']
+            self.assertTrue(artifacts)
+            woff2_art = next((a for a in artifacts if a['filename'] == '測試字型.woff2'), None)
+            self.assertIsNotNone(woff2_art, artifacts)
+            self.assertIn('%E6%B8%AC%E8%A9%A6%E5%AD%97%E5%9E%8B.woff2', woff2_art['download_url'])
+            self.assertNotIn('測試字型', woff2_art['download_url'])
+
+            dl_art = client.get(woff2_art['download_url'])
+            self.assertEqual(dl_art.status_code, 200)
+            self.assertGreater(len(dl_art.content), 20)
+
+            dl_primary = client.get(status_data['download_url'])
+            self.assertEqual(dl_primary.status_code, 200)
 
 
 if __name__ == '__main__':

@@ -17,4 +17,8 @@ opencc_gen_debug.log
 .DS_Store
 .env
 src/OpenCCFontGenerator/cache/
-src/OpenCCFontGenerator/opencc_data/
+src/OpenCCFontGenerator/opencc_data/*
+!src/OpenCCFontGenerator/opencc_data/Variants.txt
+!src/OpenCCFontGenerator/opencc_data/Var_tw.txt
+!src/OpenCCFontGenerator/opencc_data/Var_hk.txt
+!src/OpenCCFontGenerator/opencc_data/Var_cl.txt

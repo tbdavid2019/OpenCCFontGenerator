@@ -76,6 +76,8 @@ const state = {
   droppedFiles: new Map(),
   jobIds: loadStoredJobIds(),
   jobs: [],
+  logOpenState: new Map(),
+  jobRenderSig: new Map(),
   pollTimer: null,
   pollBackoffMs: 1500,
   previewTimer: null,
@@ -275,6 +277,13 @@ function getActivePreviewParams() {
   };
 }
 
+function getSpecimenLang(config) {
+  if (config === 't2s') return 'zh-Hans';
+  if (config === 's2hk') return 'zh-Hant-HK';
+  if (config === 'twp' || config === 's2tw') return 'zh-Hant-TW';
+  return 'zh-Hant';
+}
+
 async function refreshSpecimen() {
   const pairsEl = document.getElementById('specimen-pairs');
   const metaEl = document.getElementById('specimen-meta');
@@ -316,6 +325,7 @@ async function refreshSpecimen() {
     const data = await resp.json();
     if (reqSeq !== state.previewSeq) return;
 
+    const specimenLang = getSpecimenLang(config);
     pairsEl.innerHTML = '';
     for (const item of data.pairs.slice(0, 5)) {
       const pair = document.createElement('div');
@@ -328,14 +338,14 @@ async function refreshSpecimen() {
       arr.textContent = '→';
       const dst = document.createElement('span');
       dst.className = 'specimen-dst';
-      dst.setAttribute('lang', 'zh-Hant');
+      dst.setAttribute('lang', specimenLang);
       dst.textContent = item.converted;
       pair.append(src, arr, dst);
       pairsEl.appendChild(pair);
     }
 
     if (text && data.sample_converted !== null) {
-      customOut.setAttribute('lang', 'zh-Hant');
+      customOut.setAttribute('lang', specimenLang);
       customOut.textContent = data.sample_converted;
       customOut.hidden = false;
     } else {
@@ -351,6 +361,26 @@ async function refreshSpecimen() {
   }
 }
 
+function validateSelectedFilesSize(files) {
+  if (!files.length || !state.capabilities) return;
+  const maxFileMb = Number(state.capabilities.max_file_mb);
+  const maxTotalMb = Number(state.capabilities.max_total_upload_mb);
+  if (Number.isFinite(maxFileMb) && maxFileMb > 0) {
+    const maxFileBytes = maxFileMb * 1024 * 1024;
+    const oversized = files.find((f) => f.size > maxFileBytes);
+    if (oversized) {
+      throw new Error(`檔案「${oversized.name}」（${formatBytes(oversized.size)}）超過單檔上限 ${maxFileMb} MB。`);
+    }
+  }
+  if (Number.isFinite(maxTotalMb) && maxTotalMb > 0) {
+    const maxTotalBytes = maxTotalMb * 1024 * 1024;
+    const totalBytes = files.reduce((sum, f) => sum + f.size, 0);
+    if (totalBytes > maxTotalBytes) {
+      throw new Error(`選取檔案總容量（${formatBytes(totalBytes)}）超過單次上傳上限 ${maxTotalMb} MB。`);
+    }
+  }
+}
+
 function buildFormDataForActiveMode() {
   const mode = state.activeMode;
   const form = getActiveForm();
@@ -359,13 +389,14 @@ function buildFormDataForActiveMode() {
   if (mode === 'convert') {
     const srcFiles = getDropKeyFiles('convert-source', form.querySelector('#convert-source-input'));
     if (!srcFiles.length) throw new Error('請先選擇來源字型檔案。');
-    fd.append('source_font', srcFiles[0]);
-
     const fbFiles = getDropKeyFiles('convert-fallback', form.querySelector('#convert-fallback-input'));
-    if (fbFiles.length) fd.append('fallback_font', fbFiles[0]);
-
     const jsonInput = form.querySelector('#convert-name-json');
-    if (jsonInput?.files?.length) fd.append('name_header_file', jsonInput.files[0]);
+    const jsonFiles = jsonInput?.files?.length ? [jsonInput.files[0]] : [];
+    validateSelectedFilesSize([...srcFiles, ...fbFiles, ...jsonFiles]);
+
+    fd.append('source_font', srcFiles[0]);
+    if (fbFiles.length) fd.append('fallback_font', fbFiles[0]);
+    if (jsonFiles.length) fd.append('name_header_file', jsonFiles[0]);
 
     appendFormFields(fd, form, ['source_font', 'fallback_font', 'name_header_file']);
     return fd;
@@ -374,6 +405,7 @@ function buildFormDataForActiveMode() {
   if (mode === 'rotate90') {
     const srcFiles = getDropKeyFiles('rotate-source', form.querySelector('#rotate-source-input'));
     if (!srcFiles.length) throw new Error('請先選擇要旋轉的來源字型檔。');
+    validateSelectedFilesSize(srcFiles);
     fd.append('source_font', srcFiles[0]);
     appendFormFields(fd, form, ['source_font']);
     return fd;
@@ -382,6 +414,7 @@ function buildFormDataForActiveMode() {
   if (mode === 'webfont') {
     const srcFiles = getDropKeyFiles('webfont-source', form.querySelector('#webfont-source-input'));
     if (!srcFiles.length) throw new Error('請先選擇來源字型檔 (.ttf / .otf)。');
+    validateSelectedFilesSize(srcFiles);
     fd.append('source_font', srcFiles[0]);
     appendFormFields(fd, form, ['source_font']);
     return fd;
@@ -390,9 +423,9 @@ function buildFormDataForActiveMode() {
   if (mode === 'static-family') {
     const srcFiles = getDropKeyFiles('static-sources', form.querySelector('#static-sources-input'));
     if (!srcFiles.length) throw new Error('請至少上傳一個來源靜態字型檔或 ZIP 壓縮包。');
-    srcFiles.forEach((f) => fd.append('source_files', f));
-
     const fbFiles = getDropKeyFiles('static-fallbacks', form.querySelector('#static-fallbacks-input'));
+    validateSelectedFilesSize([...srcFiles, ...fbFiles]);
+    srcFiles.forEach((f) => fd.append('source_files', f));
     fbFiles.forEach((f) => fd.append('fallback_files', f));
 
     appendFormFields(fd, form, ['source_files', 'fallback_files']);
@@ -402,10 +435,10 @@ function buildFormDataForActiveMode() {
   if (mode === 'variable-family') {
     const srcFiles = getDropKeyFiles('vf-source', form.querySelector('#vf-source-input'));
     if (!srcFiles.length) throw new Error('請選擇來源 Variable Font 主檔。');
-    fd.append('source_font', srcFiles[0]);
-
     const fbFiles = getDropKeyFiles('vf-fallbacks', form.querySelector('#vf-fallbacks-input'));
     if (!fbFiles.length) throw new Error('可變字型家族模式必須上傳對應字重的備用字型群（多檔或 ZIP）。');
+    validateSelectedFilesSize([...srcFiles, ...fbFiles]);
+    fd.append('source_font', srcFiles[0]);
     fbFiles.forEach((f) => fd.append('fallback_files', f));
 
     const checkedWeights = Array.from(form.querySelectorAll('#vf-weights-grid input:checked')).map((el) => el.value);
@@ -443,6 +476,10 @@ function updateCurlPreview() {
     parts.push('  -F \'source_font=@/path/to/SourceFont.ttf\'');
     const fb = getDropKeyFiles('convert-fallback', form.querySelector('#convert-fallback-input'));
     if (fb.length) parts.push(`  -F ${quoteShellArg(`fallback_font=@/path/to/${fb[0].name}`)}`);
+    const jsonInput = form.querySelector('#convert-name-json');
+    if (jsonInput?.files?.length) {
+      parts.push(`  -F ${quoteShellArg(`name_header_file=@/path/to/${jsonInput.files[0].name}`)}`);
+    }
   } else if (mode === 'rotate90') {
     parts.push('  -F \'source_font=@/path/to/SourceFont.ttf\'');
   } else if (mode === 'webfont') {
@@ -494,7 +531,9 @@ function setSubmitting(submitting, progressPct = 0) {
   btn.disabled = submitting;
   wrap.hidden = !submitting;
   hint.hidden = submitting;
-  text.textContent = `上傳至伺服器中 ${progressPct}%`;
+  text.textContent = progressPct >= 100
+    ? '上傳完成，伺服器驗證與解壓中…'
+    : `上傳至伺服器中 ${progressPct}%`;
   fill.style.width = `${progressPct}%`;
 }
 
@@ -570,32 +609,37 @@ async function fetchStoredJobs() {
     return;
   }
 
-  let shouldKeepPolling = state.jobs.some((j) => j.status === 'queued' || j.status === 'running') || !state.jobs.length;
+  const shouldKeepPolling = state.jobs.some((j) => j.status === 'queued' || j.status === 'running') || !state.jobs.length;
+  const queriedIds = [...state.jobIds];
+  const queriedSet = new Set(queriedIds);
   try {
-    const qs = new URLSearchParams({ ids: state.jobIds.join(',') });
+    const qs = new URLSearchParams({ ids: queriedIds.join(',') });
     const resp = await fetch(`/api/v1/jobs?${qs.toString()}`);
     if (!resp.ok) {
       state.pollBackoffMs = Math.min(10000, state.pollBackoffMs * 2);
-      if (shouldKeepPolling) schedulePolling(state.pollBackoffMs);
+      if (shouldKeepPolling || state.jobs.some((j) => j.status === 'queued' || j.status === 'running')) {
+        schedulePolling(state.pollBackoffMs);
+      }
       return;
     }
     const data = await resp.json();
     state.pollBackoffMs = 1500;
     const byId = new Map(data.map((j) => [j.job_id, j]));
-    // Keep user's submission order while pruning expired IDs
-    const validIds = state.jobIds.filter((id) => byId.has(id));
+    const existingById = new Map(state.jobs.map((j) => [j.job_id, j]));
+    // Keep user's submission order while pruning only expired IDs that were part of this query
+    const validIds = state.jobIds.filter((id) => byId.has(id) || !queriedSet.has(id));
     if (validIds.length !== state.jobIds.length) {
       state.jobIds = validIds;
       saveStoredJobIds();
     }
-    state.jobs = validIds.map((id) => byId.get(id));
+    state.jobs = validIds.map((id) => byId.get(id) || existingById.get(id)).filter(Boolean);
     renderJobs();
     if (state.jobs.some((j) => j.status === 'queued' || j.status === 'running')) {
       schedulePolling(state.pollBackoffMs);
     }
   } catch {
     state.pollBackoffMs = Math.min(10000, state.pollBackoffMs * 2);
-    if (shouldKeepPolling) {
+    if (shouldKeepPolling || state.jobs.some((j) => j.status === 'queued' || j.status === 'running')) {
       schedulePolling(state.pollBackoffMs);
     }
   }
@@ -617,108 +661,178 @@ function describeJobTitle(job) {
   return `任務 (${job.mode})`;
 }
 
+function buildJobCard(job) {
+  const card = document.createElement('article');
+  card.className = 'job-card';
+  card.dataset.jobId = job.job_id;
+
+  const head = document.createElement('div');
+  head.className = 'job-head';
+
+  const titleWrap = document.createElement('div');
+  const title = document.createElement('div');
+  title.className = 'job-title';
+  title.textContent = describeJobTitle(job);
+  const idLine = document.createElement('div');
+  idLine.className = 'job-id';
+  idLine.textContent = `${job.job_id} · ${job.mode}`;
+  titleWrap.append(title, idLine);
+
+  const statusBadge = document.createElement('span');
+  statusBadge.className = `job-status is-${job.status}`;
+  statusBadge.textContent = job.status === 'queued' && job.queue_position > 0
+    ? `排隊 #${job.queue_position}`
+    : (STATUS_LABELS[job.status] || job.status);
+
+  head.append(titleWrap, statusBadge);
+
+  const line = document.createElement('div');
+  line.className = `job-line is-${job.status}`;
+  const lineFill = document.createElement('div');
+  lineFill.className = 'job-line-fill';
+  if (job.status === 'running') {
+    lineFill.style.width = `${PHASE_PROGRESS[job.phase] || 55}%`;
+  }
+  line.appendChild(lineFill);
+
+  const metaRow = document.createElement('div');
+  metaRow.className = 'job-meta-row';
+  const phaseSpan = document.createElement('span');
+  phaseSpan.textContent = PHASE_LABELS[job.phase] || job.phase;
+  const elapsedSpan = document.createElement('span');
+  elapsedSpan.textContent = job.elapsed_seconds !== null ? `${job.elapsed_seconds.toFixed(1)}s` : '等待中';
+  metaRow.append(phaseSpan, elapsedSpan);
+
+  card.append(head, line, metaRow);
+
+  if (job.error) {
+    const errBox = document.createElement('div');
+    errBox.className = 'job-error';
+    errBox.textContent = job.error;
+    card.appendChild(errBox);
+  }
+
+  if (job.log_tail && job.log_tail.length > 0) {
+    const details = document.createElement('details');
+    details.className = 'job-log-details';
+    const defaultOpen = job.status === 'running' || job.status === 'failed';
+    details.open = state.logOpenState.has(job.job_id)
+      ? state.logOpenState.get(job.job_id)
+      : defaultOpen;
+    const summary = document.createElement('summary');
+    summary.textContent = `Worker 編譯日誌 (${job.log_tail.length} 行)`;
+    summary.addEventListener('click', () => {
+      state.logOpenState.set(job.job_id, !details.open);
+    });
+    const pre = document.createElement('pre');
+    pre.className = 'job-log';
+    pre.textContent = job.log_tail.join('\n');
+    details.append(summary, pre);
+    card.appendChild(details);
+  }
+
+  const actions = document.createElement('div');
+  actions.className = 'job-actions';
+
+  if (job.status === 'completed' && job.download_url) {
+    const primaryArt = job.artifacts.find((a) => a.primary) || job.artifacts[0];
+    const dlBtn = document.createElement('a');
+    dlBtn.className = 'btn-download';
+    dlBtn.href = job.download_url;
+    dlBtn.textContent = `下載主要檔案 (${formatBytes(primaryArt?.size_bytes || 0)})`;
+    actions.appendChild(dlBtn);
+
+    for (const art of job.artifacts) {
+      if (art.primary) continue;
+      const extra = document.createElement('a');
+      extra.className = 'btn-artifact';
+      extra.href = art.download_url;
+      extra.textContent = `${art.filename} (${formatBytes(art.size_bytes)})`;
+      actions.appendChild(extra);
+    }
+  }
+
+  const delBtn = document.createElement('button');
+  delBtn.type = 'button';
+  delBtn.className = 'btn-delete-job';
+  delBtn.textContent = job.status === 'running' || job.status === 'queued' ? '中止任務' : '刪除';
+  delBtn.addEventListener('click', () => removeJob(job.job_id));
+  actions.appendChild(delBtn);
+
+  card.appendChild(actions);
+  return card;
+}
+
 function renderJobs() {
   const listEl = document.getElementById('job-list');
   const emptyEl = document.getElementById('queue-empty');
   emptyEl.hidden = state.jobs.length > 0;
-  listEl.innerHTML = '';
 
-  for (const job of state.jobs) {
-    const card = document.createElement('article');
-    card.className = 'job-card';
-
-    const head = document.createElement('div');
-    head.className = 'job-head';
-
-    const titleWrap = document.createElement('div');
-    const title = document.createElement('div');
-    title.className = 'job-title';
-    title.textContent = describeJobTitle(job);
-    const idLine = document.createElement('div');
-    idLine.className = 'job-id';
-    idLine.textContent = `${job.job_id} · ${job.mode}`;
-    titleWrap.append(title, idLine);
-
-    const statusBadge = document.createElement('span');
-    statusBadge.className = `job-status is-${job.status}`;
-    statusBadge.textContent = job.status === 'queued' && job.queue_position > 0
-      ? `排隊 #${job.queue_position}`
-      : (STATUS_LABELS[job.status] || job.status);
-
-    head.append(titleWrap, statusBadge);
-
-    const line = document.createElement('div');
-    line.className = `job-line is-${job.status}`;
-    const lineFill = document.createElement('div');
-    lineFill.className = 'job-line-fill';
-    if (job.status === 'running') {
-      lineFill.style.width = `${PHASE_PROGRESS[job.phase] || 55}%`;
-    }
-    line.appendChild(lineFill);
-
-    const metaRow = document.createElement('div');
-    metaRow.className = 'job-meta-row';
-    const phaseSpan = document.createElement('span');
-    phaseSpan.textContent = PHASE_LABELS[job.phase] || job.phase;
-    const elapsedSpan = document.createElement('span');
-    elapsedSpan.textContent = job.elapsed_seconds !== null ? `${job.elapsed_seconds.toFixed(1)}s` : '等待中';
-    metaRow.append(phaseSpan, elapsedSpan);
-
-    card.append(head, line, metaRow);
-
-    if (job.error) {
-      const errBox = document.createElement('div');
-      errBox.className = 'job-error';
-      errBox.textContent = job.error;
-      card.appendChild(errBox);
-    }
-
-    if (job.log_tail && job.log_tail.length > 0) {
-      const details = document.createElement('details');
-      details.className = 'job-log-details';
-      if (job.status === 'running' || job.status === 'failed') {
-        details.open = true;
-      }
-      const summary = document.createElement('summary');
-      summary.textContent = `Worker 編譯日誌 (${job.log_tail.length} 行)`;
-      const pre = document.createElement('pre');
-      pre.className = 'job-log';
-      pre.textContent = job.log_tail.join('\n');
-      details.append(summary, pre);
-      card.appendChild(details);
-    }
-
-    const actions = document.createElement('div');
-    actions.className = 'job-actions';
-
-    if (job.status === 'completed' && job.download_url) {
-      const primaryArt = job.artifacts.find((a) => a.primary) || job.artifacts[0];
-      const dlBtn = document.createElement('a');
-      dlBtn.className = 'btn-download';
-      dlBtn.href = job.download_url;
-      dlBtn.textContent = `下載主要檔案 (${formatBytes(primaryArt?.size_bytes || 0)})`;
-      actions.appendChild(dlBtn);
-
-      for (const art of job.artifacts) {
-        if (art.primary) continue;
-        const extra = document.createElement('a');
-        extra.className = 'btn-artifact';
-        extra.href = art.download_url;
-        extra.textContent = `${art.filename} (${formatBytes(art.size_bytes)})`;
-        actions.appendChild(extra);
-      }
-    }
-
-    const delBtn = document.createElement('button');
-    delBtn.type = 'button';
-    delBtn.className = 'btn-delete-job';
-    delBtn.textContent = job.status === 'running' || job.status === 'queued' ? '中止任務' : '刪除';
-    delBtn.addEventListener('click', () => removeJob(job.job_id));
-    actions.appendChild(delBtn);
-
-    card.appendChild(actions);
-    listEl.appendChild(card);
+  if (state.jobs.length === 0) {
+    listEl.innerHTML = '';
+    state.jobRenderSig.clear();
+    state.logOpenState.clear();
+    return;
   }
+
+  const activeIdSet = new Set(state.jobs.map((j) => j.job_id));
+  const existingCards = new Map();
+  Array.from(listEl.children).forEach((child) => {
+    const id = child.dataset?.jobId;
+    if (!id || !activeIdSet.has(id)) {
+      child.remove();
+    } else {
+      existingCards.set(id, child);
+    }
+  });
+  for (const id of state.jobRenderSig.keys()) {
+    if (!activeIdSet.has(id)) {
+      state.jobRenderSig.delete(id);
+      state.logOpenState.delete(id);
+    }
+  }
+
+  state.jobs.forEach((job, index) => {
+    const sig = JSON.stringify(job);
+    const prevCard = existingCards.get(job.job_id);
+    if (prevCard && state.jobRenderSig.get(job.job_id) === sig) {
+      const currentAtIndex = listEl.children[index];
+      if (currentAtIndex !== prevCard) {
+        listEl.insertBefore(prevCard, currentAtIndex || null);
+      }
+      return;
+    }
+
+    const prevPre = prevCard?.querySelector('.job-log');
+    const hadPrevPre = Boolean(prevPre);
+    const prevScrollTop = prevPre ? prevPre.scrollTop : 0;
+    const wasAtBottom = prevPre
+      ? (prevPre.scrollTop + prevPre.clientHeight >= prevPre.scrollHeight - 8)
+      : false;
+
+    const newCard = buildJobCard(job);
+    if (prevCard) {
+      prevCard.replaceWith(newCard);
+      const currentAtIndex = listEl.children[index];
+      if (currentAtIndex !== newCard) {
+        listEl.insertBefore(newCard, currentAtIndex || null);
+      }
+    } else {
+      const currentAtIndex = listEl.children[index];
+      listEl.insertBefore(newCard, currentAtIndex || null);
+    }
+
+    state.jobRenderSig.set(job.job_id, sig);
+
+    const newPre = newCard.querySelector('.job-log');
+    if (newPre) {
+      if (wasAtBottom || (!hadPrevPre && job.status === 'running')) {
+        newPre.scrollTop = newPre.scrollHeight;
+      } else {
+        newPre.scrollTop = prevScrollTop;
+      }
+    }
+  });
 }
 
 async function removeJob(jobId) {
@@ -729,6 +843,8 @@ async function removeJob(jobId) {
   }
   state.jobIds = state.jobIds.filter((id) => id !== jobId);
   state.jobs = state.jobs.filter((j) => j.job_id !== jobId);
+  state.logOpenState.delete(jobId);
+  state.jobRenderSig.delete(jobId);
   saveStoredJobIds();
   renderJobs();
   refreshStatusBanner();
@@ -828,6 +944,13 @@ function init() {
 
   document.getElementById('clear-history-btn').addEventListener('click', () => {
     const activeOnly = state.jobs.filter((j) => j.status === 'queued' || j.status === 'running');
+    const keepIds = new Set(activeOnly.map((j) => j.job_id));
+    for (const id of state.logOpenState.keys()) {
+      if (!keepIds.has(id)) state.logOpenState.delete(id);
+    }
+    for (const id of state.jobRenderSig.keys()) {
+      if (!keepIds.has(id)) state.jobRenderSig.delete(id);
+    }
     state.jobIds = activeOnly.map((j) => j.job_id);
     state.jobs = activeOnly;
     saveStoredJobIds();

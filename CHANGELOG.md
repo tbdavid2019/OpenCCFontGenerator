@@ -4,6 +4,33 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ---
 
+## [2026-11-20]
+
+### Fixed
+
+#### 部署前全盤檢查與 Web / CLI 強健性修復
+- **納管異體字回退詞庫至 Git 與 Docker 建置環境**：
+  - 調整 [.gitignore](.gitignore) 與 [.dockerignore](.dockerignore)，僅忽略上游下載的字典檔而明確保留 `src/OpenCCFontGenerator/opencc_data/Variants.txt`、`Var_tw.txt`、`Var_hk.txt`、`Var_cl.txt`，確保 Docker 映像與遠端部署能正常執行 `apply_variants()` 異體字補字。
+- **修復 `static_family` 中文檔名遺失、非 TTF/OTF 副檔名輸出錯誤與撞名覆蓋**：
+  - 更新 [static_family.py](src/OpenCCFontGenerator/static_family.py) 的 `sanitize_filename_part()` 保留中文漢字，新增 `_resolve_output_extension()` 將 `.woff2`/`.ttc` 來源正規化為 `.ttf` 輸出，並於 `build_static_cjk_family()` 去重檔名（衝突時自動加上 `_2`、`_3` 後綴）。
+- **修復 `run90` 編譯失敗未攔截與 Worker 假成功／暫存殘留**：
+  - 更新 [run90.py](src/OpenCCFontGenerator/run90.py) 的 `save_font_json()` 為暫存檔原子建置，強制 `check=True` 與產物非空檢查。
+  - 更新 [worker.py](src/OpenCCFontGenerator/web/worker.py) 的 `_register_outputs()` 禁止空產物回報成功，並於任務結束後自動清理 `inputs/` 及 `static-family` / `variable-family` 中間解包資料夾以節省磁碟空間。
+- **修復 CSS 模板跳脫與非 ASCII 產物下載連結編碼**：
+  - 更新 [webfont.py](src/OpenCCFontGenerator/webfont.py) 新增 `_escape_css_string()` 跳脫 `font-family` 與檔名中的引號、反斜線、換行與 `*/`。
+  - 更新 [jobs.py](src/OpenCCFontGenerator/web/jobs.py) 對 `download_url` 中的產物檔名執行 `urllib.parse.quote` 百分號編碼。
+- **修復 Web 前端輪詢競爭條件與日誌重繪問題**：
+  - 更新 [app.js](src/OpenCCFontGenerator/web/static/app.js)：修正 `fetchStoredJobs()` 快照比對避免移除輪詢期間剛送出的新任務；將 `renderJobs()` 改為依 `job_id` 差異更新，保留日誌 `<details>` 展開狀態與捲動位置；新增上傳檔案大小前端預檢、`lang` 語系標註與 `name_header_file` cURL 預覽。
+
+### Changed
+
+- **Docker 映像瘦身與生產部署參數化**：
+  - [Dockerfile](Dockerfile) 在 `python setup.py build` 後清理 `/app/build` 中間檔案。
+  - [docker-compose.yml](docker-compose.yml) 將預設並發 Worker 調整為 `1`（配合 `mem_limit: 4g` 避免大型 CJK 字型同時編譯發生 OOM），並支援透過環境變數設定綁定埠位、並發數、可信反代與 CORS 來源。
+- **補充單元與 Web API 測試**：更新 [tests/test_font_io.py](tests/test_font_io.py) 與 [tests/test_web_api.py](tests/test_web_api.py) 驗證上述修復項目。
+
+---
+
 ## [2026-11-15]
 
 ### Added

@@ -42,7 +42,7 @@ RUN pip install --upgrade pip \
 COPY src ./src
 
 # Download opencc-data 1.4.2 and prebuild OpenCC font lookup caches into the image
-RUN python setup.py build
+RUN python setup.py build && rm -rf /app/build
 
 RUN groupadd --system appgroup \
     && useradd --system --gid appgroup --create-home appuser \
