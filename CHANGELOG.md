@@ -6,6 +6,14 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ## [2026-11-20]
 
+### Added
+
+#### 888 字體檔加工台品牌命名與完整 SEO / Open Graph / PWA 圖示支援
+- **補齊 `https://font.david888.com` 搜尋引擎與社群分享中繼資料（Meta / OG / Twitter / JSON-LD）**：
+  - 將站台標題與品牌名稱更新為「**888 字體檔加工台**」，並於 [index.html](src/OpenCCFontGenerator/web/static/index.html) 補齊 `<meta name="description">`、`canonical`、完整 Open Graph（`og:type`、`og:site_name`、`og:locale`、`og:url`、`og:title`、`og:description`、`og:image` `1200×630`）、Twitter Card（`summary_large_image`）與 `WebApplication` Schema.org JSON-LD 結構化資料。
+  - 新增品牌專屬 [og-image.png](src/OpenCCFontGenerator/web/static/og-image.png)（`1200×630`）、多解析度 [favicon.ico](src/OpenCCFontGenerator/web/static/favicon.ico)（`16/32/48`）、PNG 圖示組（`16×16`、`32×32`、`180×180 apple-touch-icon.png`、`192×192`、`512×512`）、[site.webmanifest](src/OpenCCFontGenerator/web/static/site.webmanifest) 與 [robots.txt](src/OpenCCFontGenerator/web/static/robots.txt)。
+  - 更新 [app.py](src/OpenCCFontGenerator/web/app.py) 提供上述根目錄靜態資產路由與快取標頭（HTML `/` 採 `Cache-Control: no-cache` 以保留 bfcache；圖示與 Manifest 採 `public, max-age=86400`），並於 [test_web_api.py](tests/test_web_api.py) 驗證全數中繼標籤與資源回應。
+
 ### Changed
 
 #### 套用 `david888.com` WCAG 2.1 AA/AAA 配色與品牌 Footer

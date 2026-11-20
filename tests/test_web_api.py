@@ -92,11 +92,49 @@ class WebApiTests(unittest.TestCase):
         with TestClient(self.app) as client:
             index_resp = client.get('/')
             self.assertEqual(index_resp.status_code, 200)
-            self.assertIn('OpenCC 字型工作台', index_resp.text)
+            self.assertEqual(index_resp.headers.get('Cache-Control'), 'no-cache')
+            self.assertIn('888 字體檔加工台', index_resp.text)
             self.assertIn('https://david888.com', index_resp.text)
             self.assertIn('david888.com</strong> 技術提供', index_resp.text)
             self.assertIn('<footer class="site-footer">', index_resp.text)
             self.assertIn('<meta name="theme-color" content="#FFB010">', index_resp.text)
+            self.assertIn('<meta name="description"', index_resp.text)
+            self.assertIn('<link rel="canonical" href="https://font.david888.com/">', index_resp.text)
+            self.assertIn('property="og:title"', index_resp.text)
+            self.assertIn('property="og:description"', index_resp.text)
+            self.assertIn('property="og:image" content="https://font.david888.com/og-image.png"', index_resp.text)
+            self.assertIn('property="og:url" content="https://font.david888.com/"', index_resp.text)
+            self.assertIn('property="og:site_name" content="888 字體檔加工台"', index_resp.text)
+            self.assertIn('property="og:locale" content="zh_TW"', index_resp.text)
+            self.assertIn('name="twitter:card" content="summary_large_image"', index_resp.text)
+            self.assertIn('name="twitter:image" content="https://font.david888.com/og-image.png"', index_resp.text)
+            self.assertIn('application/ld+json', index_resp.text)
+            self.assertIn('rel="apple-touch-icon"', index_resp.text)
+            self.assertIn('href="/favicon.ico"', index_resp.text)
+            self.assertIn('href="/site.webmanifest"', index_resp.text)
+
+            root_assets = (
+                ('/favicon.ico', 'image/x-icon'),
+                ('/favicon.svg', 'image/svg+xml'),
+                ('/favicon-32x32.png', 'image/png'),
+                ('/favicon-16x16.png', 'image/png'),
+                ('/apple-touch-icon.png', 'image/png'),
+                ('/android-chrome-192x192.png', 'image/png'),
+                ('/android-chrome-512x512.png', 'image/png'),
+                ('/og-image.png', 'image/png'),
+                ('/site.webmanifest', 'application/manifest+json'),
+                ('/robots.txt', 'text/plain'),
+            )
+            for asset_path, expected_ctype in root_assets:
+                asset_resp = client.get(asset_path)
+                self.assertEqual(asset_resp.status_code, 200, asset_path)
+                self.assertIn(expected_ctype, asset_resp.headers.get('content-type', ''), asset_path)
+                self.assertEqual(asset_resp.headers.get('Cache-Control'), 'public, max-age=86400', asset_path)
+                self.assertGreater(len(asset_resp.content), 20, asset_path)
+
+            manifest_data = client.get('/site.webmanifest').json()
+            self.assertEqual(manifest_data['name'], '888 字體檔加工台｜OpenCC 字型轉換工作台')
+            self.assertEqual(manifest_data['theme_color'], '#FFB010')
 
             css_resp = client.get('/static/styles.css')
             self.assertEqual(css_resp.status_code, 200)

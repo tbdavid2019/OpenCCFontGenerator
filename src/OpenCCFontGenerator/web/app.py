@@ -360,7 +360,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
             manager.shutdown()
 
     application = FastAPI(
-        title='OpenCCFontGenerator Web & API',
+        title='888 字體檔加工台｜OpenCCFontGenerator API',
         version=SERVICE_VERSION,
         description=(
             '非同步 OpenType CJK 字型簡繁轉換、GSUB 詞彙編譯、90° 直排旋轉、'
@@ -390,7 +390,40 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
         index_path = STATIC_DIR / 'index.html'
         if not index_path.is_file():
             raise HTTPException(status_code=404, detail='Web UI 靜態檔案尚未建置。')
-        return FileResponse(index_path)
+        return FileResponse(index_path, headers={'Cache-Control': 'no-cache'})
+
+    root_static_assets = {
+        '/favicon.ico': ('favicon.ico', 'image/x-icon'),
+        '/favicon.svg': ('favicon.svg', 'image/svg+xml'),
+        '/favicon-32x32.png': ('favicon-32x32.png', 'image/png'),
+        '/favicon-16x16.png': ('favicon-16x16.png', 'image/png'),
+        '/apple-touch-icon.png': ('apple-touch-icon.png', 'image/png'),
+        '/android-chrome-192x192.png': ('android-chrome-192x192.png', 'image/png'),
+        '/android-chrome-512x512.png': ('android-chrome-512x512.png', 'image/png'),
+        '/og-image.png': ('og-image.png', 'image/png'),
+        '/site.webmanifest': ('site.webmanifest', 'application/manifest+json'),
+        '/robots.txt': ('robots.txt', 'text/plain; charset=utf-8'),
+    }
+
+    for _route_path, (_filename, _media_type) in root_static_assets.items():
+        def _make_asset_handler(filename: str, media_type: str):
+            def _serve_root_asset():
+                asset_path = STATIC_DIR / filename
+                if not asset_path.is_file():
+                    raise HTTPException(status_code=404, detail='找不到指定的靜態資源。')
+                return FileResponse(
+                    asset_path,
+                    media_type=media_type,
+                    headers={'Cache-Control': 'public, max-age=86400'},
+                )
+            return _serve_root_asset
+
+        application.add_api_route(
+            _route_path,
+            _make_asset_handler(_filename, _media_type),
+            methods=['GET', 'HEAD'],
+            include_in_schema=False,
+        )
 
     @application.get('/healthz', response_model=HealthResponse, tags=['System'])
     def healthz():

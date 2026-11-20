@@ -1,0 +1,31 @@
+{
+  "name": "888 字體檔加工台｜OpenCC 字型轉換工作台",
+  "short_name": "888 字體加工台",
+  "description": "免費線上 CJK OpenType 字型簡繁轉換工具，內建 OpenCC 1.4.2 詞彙級 GSUB 規則、90° 直排旋轉、WOFF2 Webfont 打包與多字重家族批次編譯。",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#FFF2D1",
+  "theme_color": "#FFB010",
+  "lang": "zh-Hant",
+  "icons": [
+    {
+      "src": "/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ]
+}
