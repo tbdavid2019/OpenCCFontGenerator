@@ -6,6 +6,14 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ## [2026-11-20]
 
+### Changed
+
+#### 套用 `david888.com` WCAG 2.1 AA/AAA 配色與品牌 Footer
+- **全面切換 `david888.com` 品牌色系並強化 WCAG 對比度與輔助使用支援**：
+  - 更新 [styles.css](src/OpenCCFontGenerator/web/static/styles.css)、[favicon.svg](src/OpenCCFontGenerator/web/static/favicon.svg) 與 [DESIGN.md](DESIGN.md)：採用深海藍（`#17324D`）、番紅花金（`#FFB010`）、暖奶油紙底（`#FFFEFA` / `#FFF9E8` / `#FFF2D1`）與陶土橘紅（`#9A3F18`），全部文字與表面組合對比度皆達 WCAG AA（>= 4.5:1）至 AAA（7:1+），元件邊框與焦點外框達 WCAG 1.4.11（>= 3:1），並補齊 `::placeholder`、`caret-color`、雙色系 `:focus-visible`（導覽列 `#FFB010` / 內容區 `#17324D`）與 `@media (forced-colors: active)` 系統高對比回退。
+- **新增 `david888.com 技術提供` 品牌 Footer 與行動版主題色**：
+  - 更新 [index.html](src/OpenCCFontGenerator/web/static/index.html) 加入 `<meta name="theme-color" content="#FFB010">` 與語意化 `<footer class="site-footer">`（含 `david888.com 技術提供` 連結、OpenCC 1.4.2 服務說明、`/docs`、`ReDoc` 與 GitHub 連結，並統一左側欄 `/docs` 連結無障礙名稱為 `OpenAPI /docs`），並於 [test_web_api.py](tests/test_web_api.py) 補齊品牌色與 Footer 回歸斷言。
+
 ### Fixed
 
 #### 部署前全盤檢查與 Web / CLI 強健性修復

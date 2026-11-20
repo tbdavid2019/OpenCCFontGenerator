@@ -93,6 +93,15 @@ class WebApiTests(unittest.TestCase):
             index_resp = client.get('/')
             self.assertEqual(index_resp.status_code, 200)
             self.assertIn('OpenCC 字型工作台', index_resp.text)
+            self.assertIn('https://david888.com', index_resp.text)
+            self.assertIn('david888.com</strong> 技術提供', index_resp.text)
+            self.assertIn('<footer class="site-footer">', index_resp.text)
+            self.assertIn('<meta name="theme-color" content="#FFB010">', index_resp.text)
+
+            css_resp = client.get('/static/styles.css')
+            self.assertEqual(css_resp.status_code, 200)
+            self.assertIn('--saffron: #FFB010', css_resp.text)
+            self.assertIn('--deep-blue: #17324D', css_resp.text)
 
             health_resp = client.get('/healthz')
             self.assertEqual(health_resp.status_code, 200)
