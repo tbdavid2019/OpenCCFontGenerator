@@ -69,11 +69,36 @@ def get_lookup_values(obj, table_name):
         return ()
     return lookups.values()
 
+def _resolve_font_number(input_path, ttc_index=None):
+    '''Return FontTools fontNumber: explicit index, 0 for TTC/OTC collections, or -1.'''
+    if ttc_index is not None:
+        return int(ttc_index)
+    if str(input_path).lower().endswith(('.ttc', '.otc')):
+        return 0
+    return -1
+
+def detect_output_extension(input_path, ttc_index=None):
+    '''Return '.otf' when the input font uses CFF/CFF2 outlines, otherwise '.ttf'.'''
+    lower_path = str(input_path).lower()
+    fallback_ext = '.otf' if lower_path.endswith('.otf') else '.ttf'
+    if TTFont is None:
+        return fallback_ext
+    font_number = _resolve_font_number(input_path, ttc_index)
+    try:
+        with open(input_path, 'rb') as fp:
+            font = TTFont(fp, fontNumber=font_number, lazy=True)
+            try:
+                return '.otf' if ('CFF ' in font or 'CFF2' in font) else '.ttf'
+            finally:
+                font.close()
+    except Exception:
+        return fallback_ext
+
 def is_cff_font(input_path, ttc_index=None):
     '''Return whether a font uses CFF outlines.'''
     if TTFont is None:
         return False
-    font_number = -1 if ttc_index is None else ttc_index
+    font_number = _resolve_font_number(input_path, ttc_index)
     font = TTFont(input_path, fontNumber=font_number, lazy=True)
     try:
         return 'CFF ' in font
@@ -95,7 +120,7 @@ def normalize_otf_for_otfcc(input_path, ttc_index=None):
     fd, normalized_path = tempfile.mkstemp(suffix='.otf')
     os.close(fd)
     try:
-        font_number = -1 if ttc_index is None else ttc_index
+        font_number = _resolve_font_number(input_path, ttc_index)
         font = TTFont(input_path, fontNumber=font_number, lazy=False)
         try:
             cff = font['CFF '].cff
@@ -176,6 +201,8 @@ def load_font(path, ttc_index=None):
         path = temp_ttf
 
     try:
+        if ttc_index is None and str(path).lower().endswith(('.ttc', '.otc')):
+            ttc_index = 0
         if is_cff_font(path, ttc_index=ttc_index):
             print(f"Normalizing CFF outlines for browser compatibility: {path}")
             normalized_otf = normalize_otf_for_otfcc(path, ttc_index=ttc_index)
@@ -233,24 +260,34 @@ def save_font(obj, output_path, output_woff2=False):
             f.write("WOFF2 output requested. Checking for fonttools...\n")
             if TTFont is None:
                 f.write("CRITICAL ERROR: TTFont is None! fonttools or brotli is NOT installed in this environment.\n")
-                return
-                
+                raise ImportError("fonttools and brotli are required to output WOFF2 fonts")
+
             woff2_path = os.path.splitext(output_path)[0] + '.woff2'
             f.write(f"Target WOFF2 path: {woff2_path}\n")
-            
+            fd_w2, tmp_woff2 = tempfile.mkstemp(dir=output_dir, suffix='.woff2')
+            os.close(fd_w2)
+            os.remove(tmp_woff2)
+
             try:
                 f.write(f"Compressing to WOFF2: {woff2_path} ...\n")
-                # Using print here so user sees it in terminal too
                 print(f"Compressing to WOFF2: {woff2_path} ...")
                 font = TTFont(output_path)
-                font.flavor = 'woff2'
-                font.save(woff2_path)
-                if os.path.exists(woff2_path):
-                    f.write(f"WOFF2 compression completed successfully. File size: {os.path.getsize(woff2_path)} bytes\n")
-                else:
-                    f.write("ERROR: WOFF2 file was not created after font.save()\n")
+                try:
+                    font.flavor = 'woff2'
+                    font.save(tmp_woff2)
+                finally:
+                    font.close()
+                if not os.path.isfile(tmp_woff2) or os.path.getsize(tmp_woff2) == 0:
+                    raise RuntimeError(f"WOFF2 compression produced empty output: {woff2_path}")
+                os.chmod(tmp_woff2, output_mode)
+                os.replace(tmp_woff2, woff2_path)
+                f.write(f"WOFF2 compression completed successfully. File size: {os.path.getsize(woff2_path)} bytes\n")
             except Exception as e:
                 f.write(f"CRITICAL ERROR: Failed to compress WOFF2: {str(e)}\n")
+                raise
+            finally:
+                if os.path.exists(tmp_woff2):
+                    os.remove(tmp_woff2)
         else:
             f.write("output_woff2 is False, skipping WOFF2 compression.\n")
 
@@ -347,6 +384,35 @@ def build_opencc_word_table(config='s2t'):
 
     return entries
 
+ISOLATED_VARIANT_GROUPS = (
+    ({'發', '発'}, {'髮', '髪'}, {'发'}),
+    ({'后'}, {'後'}),
+    ({'面'}, {'麪', '麵', '麺', '麫'}),
+    ({'臺', '台'}, {'檯', '枱'}, {'颱'}),
+    ({'余'}, {'餘', '馀'}),
+)
+
+
+def _split_isolated_variant_group(chars):
+    '''Split a variant group so distinct Traditional/Simplified homograph buckets never cross-map.'''
+    groups = [list(chars)]
+    for buckets in ISOLATED_VARIANT_GROUPS:
+        next_groups = []
+        all_special = set().union(*buckets)
+        for grp in groups:
+            present_buckets = [b for b in buckets if any(c in b for c in grp)]
+            if len(present_buckets) <= 1:
+                next_groups.append(grp)
+                continue
+            common = [c for c in grp if c not in all_special]
+            for bucket in buckets:
+                part = [c for c in grp if c in bucket] + common
+                if len(part) >= 2:
+                    next_groups.append(part)
+        groups = next_groups
+    return [grp for grp in groups if len(grp) >= 2]
+
+
 def apply_variants(obj, config='s2t'):
     '''
     Apply variant mappings (heteronyms/variants) to the font's cmap.
@@ -373,29 +439,24 @@ def apply_variants(obj, config='s2t'):
                 if len(chars) < 2:
                     continue
 
-                # Avoid cross-mapping distinct Traditional homographs 發/発 and 髮/髪.
-                if any(c in ('發', '発') for c in chars) and any(c in ('髮', '髪') for c in chars):
-                    chars = [c for c in chars if c not in ('髮', '髪')]
-                    if len(chars) < 2:
-                        continue
-
-                # Find which of these characters exist in the current font
-                target_glyph = None
-                for c in chars:
-                    cp_str = str(ord(c))
-                    if cp_str in obj['cmap']:
-                        target_glyph = obj['cmap'][cp_str]
-                        break
-
-                # If we found a glyph, map all other characters in the variant group to it
-                if target_glyph:
-                    for c in chars:
+                for group_chars in _split_isolated_variant_group(chars):
+                    # Find which of these characters exist in the current font
+                    target_glyph = None
+                    for c in group_chars:
                         cp_str = str(ord(c))
-                        if cp_str not in obj['cmap']:
-                            obj['cmap'][cp_str] = target_glyph
-                            if target_glyph not in obj['cmap_rev']:
-                                obj['cmap_rev'][target_glyph] = []
-                            obj['cmap_rev'][target_glyph].append(cp_str)
+                        if cp_str in obj['cmap']:
+                            target_glyph = obj['cmap'][cp_str]
+                            break
+
+                    # If we found a glyph, map all other characters in the variant group to it
+                    if target_glyph:
+                        for c in group_chars:
+                            cp_str = str(ord(c))
+                            if cp_str not in obj['cmap']:
+                                obj['cmap'][cp_str] = target_glyph
+                                if target_glyph not in obj['cmap_rev']:
+                                    obj['cmap_rev'][target_glyph] = []
+                                obj['cmap_rev'][target_glyph].append(cp_str)
 
 def disassociate_codepoint_and_glyph_name(obj, codepoint, glyph_name):
     del obj['cmap'][codepoint]
@@ -525,8 +586,21 @@ def ensure_gsub_feature_targets(obj, feature_name):
     seen_targets = set()
     for lang_table in languages.values():
         lang_features = lang_table.setdefault('features', [])
+        req_key = lang_table.get('requiredFeature')
         matching = [key for key in lang_features if get_gsub_feature_tag(key) == feature_name]
-        if not matching:
+        if isinstance(req_key, str) and get_gsub_feature_tag(req_key) == feature_name:
+            primary_key = req_key
+            primary_lookups = features.setdefault(primary_key, [])
+            for dup_key in matching:
+                if dup_key == primary_key:
+                    continue
+                for lookup_name in features.get(dup_key, ()):
+                    if lookup_name not in primary_lookups:
+                        primary_lookups.append(lookup_name)
+            if matching:
+                dup_set = set(matching)
+                lang_features[:] = [key for key in lang_features if key not in dup_set]
+        elif not matching:
             features.setdefault(feature_name, [])
             lang_features.append(feature_name)
             primary_key = feature_name
@@ -799,9 +873,12 @@ def apply_force_vertical(obj):
     if 'GSUB' not in obj or 'features' not in obj['GSUB'] or 'lookups' not in obj['GSUB']:
         return
     vert_lookups = []
-    for feature_tag, feature in obj['GSUB']['features'].items():
-        if feature_tag.strip() in ('vert', 'vrt2'):
-            vert_lookups.extend(feature['lookups'])
+    for feature_key, feature in obj['GSUB']['features'].items():
+        if get_gsub_feature_tag(feature_key).strip() in ('vert', 'vrt2'):
+            if isinstance(feature, list):
+                vert_lookups.extend(feature)
+            elif isinstance(feature, dict):
+                vert_lookups.extend(feature.get('lookups', ()))
     if not vert_lookups:
         return
     mapping = {}
@@ -833,9 +910,6 @@ def clone_fallback_glyph(primary_obj, fallback_obj, glyph_name, cloned_map):
     '''
     if glyph_name in cloned_map:
         return cloned_map[glyph_name]
-    if glyph_name in primary_obj['glyf']:
-        cloned_map[glyph_name] = glyph_name
-        return glyph_name
     if glyph_name not in fallback_obj['glyf']:
         return None
 

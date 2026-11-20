@@ -24,7 +24,7 @@ Unlike runtime text-conversion scripts or naive codepoint remapping tools, this 
 
 ## Operating Context
 
-CJK font decompilation (`otfccdump`), GSUB injection, and recompilation (`otfccbuild`) typically take 15–60+ seconds per font and consume significant memory. The web and API layer operates asynchronously: clients upload source/fallback fonts to create a job, poll status and streaming build logs by `job_id`, and download single font outputs or `.zip` bundles once complete. Deployed via Docker (`linux/amd64` due to upstream `otfcc` v0.10.4 prebuilt Linux x64 binaries) behind reverse proxies or directly for public self-hosted access.
+CJK font decompilation (`otfccdump`), GSUB injection, and recompilation (`otfccbuild`) typically take 15–60+ seconds per font and consume significant memory. The web and API layer operates asynchronously: clients upload source/fallback fonts to create a job, poll status and streaming build logs by `job_id`, and download single font outputs or `.zip` bundles once complete. Deployed via multi-arch Docker (`linux/amd64` and `linux/arm64` with `otfcc` v0.10.4 built from verified source) behind reverse proxies or directly for public self-hosted access.
 
 ## Capabilities and Constraints
 

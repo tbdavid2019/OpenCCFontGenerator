@@ -16,10 +16,11 @@ except ImportError:
     from typing_extensions import Annotated
 
 import anyio
-from fastapi import FastAPI, File, Form, HTTPException, Query, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Query, Request, Response, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.background import BackgroundTask
 
 from ..vf_family import WEIGHT_PRESETS
 from .config import WebSettings
@@ -49,6 +50,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 STATIC_DIR = Path(__file__).resolve().parent / 'static'
 SERVICE_VERSION = '1.0.0'
 MULTIPART_OVERHEAD_BYTES = 4 * 1024 * 1024  # Bound headers, form fields, and MIME boundaries
+NO_STORE_HEADERS = {'Cache-Control': 'private, no-store'}
 
 ConfigChoice = Literal['s2t', 'twp', 's2tw', 's2hk', 't2s']
 MergeModeChoice = Literal['opencc', 'universal']
@@ -75,6 +77,13 @@ def _parse_trusted_networks(entries: Tuple[str, ...]) -> List[Union[ipaddress.IP
     return networks
 
 
+def _normalize_ip(raw: str) -> Optional[str]:
+    try:
+        return ipaddress.ip_address(raw.strip()).compressed
+    except ValueError:
+        return None
+
+
 def _is_trusted_ip(ip_str: str, networks: List[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]]) -> bool:
     if not networks:
         return False
@@ -91,7 +100,8 @@ def _client_ip_from_scope(
     trusted_networks: List[Union[ipaddress.IPv4Network, ipaddress.IPv6Network]],
 ) -> str:
     client = scope.get('client')
-    peer_host = client[0] if client else 'unknown'
+    raw_peer = client[0] if client else 'unknown'
+    peer_host = _normalize_ip(raw_peer) or raw_peer
     # Fail closed unless proxy trust is explicitly enabled AND non-empty trusted proxies are configured
     if not trust_proxy or not trusted_networks or not _is_trusted_ip(peer_host, trusted_networks):
         return peer_host
@@ -103,12 +113,12 @@ def _client_ip_from_scope(
         if hops:
             for hop in reversed(hops):
                 if not _is_trusted_ip(hop, trusted_networks):
-                    return hop
-            return hops[0]
+                    return _normalize_ip(hop) or peer_host
+            return _normalize_ip(hops[0]) or peer_host
 
     raw_xri = headers.get(b'x-real-ip')
     if raw_xri:
-        return raw_xri.decode('latin-1').strip() or peer_host
+        return _normalize_ip(raw_xri.decode('latin-1')) or peer_host
 
     return peer_host
 
@@ -132,17 +142,19 @@ async def _send_json_error(
 
 
 class UploadGuardMiddleware:
-    """Pure ASGI middleware enforcing per-IP rate limit and max body size before multipart parsing."""
+    """Pure ASGI middleware enforcing rate limit, queue admission, and max body size before multipart parsing."""
 
     def __init__(
         self,
         app: Any,
         settings: WebSettings,
         limiter: SlidingWindowRateLimiter,
+        manager: JobManager,
     ) -> None:
         self.app = app
         self.settings = settings
         self.limiter = limiter
+        self.manager = manager
         self.max_body_bytes = settings.max_total_upload_bytes + MULTIPART_OVERHEAD_BYTES
         self.trusted_networks = _parse_trusted_networks(settings.trusted_proxies)
 
@@ -174,6 +186,9 @@ class UploadGuardMiddleware:
             except ValueError:
                 await _send_json_error(send, status_code=400, detail='無效的 Content-Length 標頭。')
                 return
+            if content_length < 0:
+                await _send_json_error(send, status_code=400, detail='無效的 Content-Length 標頭。')
+                return
             if content_length > self.max_body_bytes:
                 await _send_json_error(
                     send,
@@ -182,6 +197,13 @@ class UploadGuardMiddleware:
                 )
                 return
 
+        try:
+            release_upload_slot = self.manager.acquire_upload_slot()
+        except HTTPException as exc:
+            await _send_json_error(send, status_code=exc.status_code, detail=str(exc.detail))
+            return
+
+        scope['opencc_upload_release'] = release_upload_slot
         received_bytes = 0
         body_exceeded = False
         response_started = False
@@ -208,6 +230,8 @@ class UploadGuardMiddleware:
             await self.app(scope, bounded_receive, tracking_send)
         except _BodyTooLarge:
             body_exceeded = True
+        finally:
+            release_upload_slot()
 
         if body_exceeded and not response_started:
             await _send_json_error(
@@ -226,9 +250,22 @@ def _read_opencc_data_version() -> Optional[str]:
 
 def _is_cache_ready() -> bool:
     required = (
-        PACKAGE_ROOT / 'cache' / 'convert_table_chars.txt',
-        PACKAGE_ROOT / 'cache' / 'convert_table_chars_twp.txt',
+        PACKAGE_ROOT / 'cache' / '.cache_version',
         PACKAGE_ROOT / 'cache' / 'code_points_han.txt',
+        PACKAGE_ROOT / 'cache' / 'convert_table_chars.txt',
+        PACKAGE_ROOT / 'cache' / 'convert_table_words.txt',
+        PACKAGE_ROOT / 'cache' / 'convert_table_chars_twp.txt',
+        PACKAGE_ROOT / 'cache' / 'convert_table_words_twp.txt',
+        PACKAGE_ROOT / 'cache' / 'convert_table_chars_s2tw.txt',
+        PACKAGE_ROOT / 'cache' / 'convert_table_words_s2tw.txt',
+        PACKAGE_ROOT / 'cache' / 'convert_table_chars_s2hk.txt',
+        PACKAGE_ROOT / 'cache' / 'convert_table_words_s2hk.txt',
+        PACKAGE_ROOT / 'cache' / 'convert_table_chars_t2s.txt',
+        PACKAGE_ROOT / 'cache' / 'convert_table_words_t2s.txt',
+        PACKAGE_ROOT / 'opencc_data' / '.opencc_data_version',
+        PACKAGE_ROOT / 'opencc_data' / 'Variants.txt',
+        PACKAGE_ROOT / 'opencc_data' / 'Var_tw.txt',
+        PACKAGE_ROOT / 'opencc_data' / 'Var_hk.txt',
     )
     return all(p.is_file() for p in required)
 
@@ -255,6 +292,7 @@ async def _ingest_font_collection(
     max_file_bytes: int,
     remaining_bytes: int,
     extraction_budget: ZipExtractionBudget,
+    extract_semaphore: Optional[anyio.Semaphore] = None,
 ) -> Tuple[List[Path], int]:
     """Save uploaded font files or ZIP archives into target_dir using a shared extraction budget."""
     combined_exts = allowed_font_exts | ARCHIVE_EXTENSIONS
@@ -278,14 +316,25 @@ async def _ingest_font_collection(
         consumed += size
         if is_zip:
             try:
-                extracted = await anyio.to_thread.run_sync(
-                    extract_fonts_from_zip,
-                    saved_path,
-                    target_dir,
-                    allowed_font_exts,
-                    extraction_budget.remaining_bytes,
-                    extraction_budget,
-                )
+                if extract_semaphore is not None:
+                    async with extract_semaphore:
+                        extracted = await anyio.to_thread.run_sync(
+                            extract_fonts_from_zip,
+                            saved_path,
+                            target_dir,
+                            allowed_font_exts,
+                            extraction_budget.remaining_bytes,
+                            extraction_budget,
+                        )
+                else:
+                    extracted = await anyio.to_thread.run_sync(
+                        extract_fonts_from_zip,
+                        saved_path,
+                        target_dir,
+                        allowed_font_exts,
+                        extraction_budget.remaining_bytes,
+                        extraction_budget,
+                    )
             finally:
                 saved_path.unlink(missing_ok=True)
             saved_fonts.extend(extracted)
@@ -300,6 +349,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
     cfg = settings or WebSettings.from_env()
     manager = JobManager(cfg)
     limiter = SlidingWindowRateLimiter(cfg.rate_limit_per_min)
+    extract_semaphore = anyio.Semaphore(max(1, min(2, cfg.max_concurrent_uploads)))
 
     @asynccontextmanager
     async def lifespan(_app: FastAPI):
@@ -323,8 +373,8 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
     application.state.job_manager = manager
     application.state.rate_limiter = limiter
 
-    # Guard runs inside CORS so 413/429 responses still carry CORS headers while running before multipart parsing
-    application.add_middleware(UploadGuardMiddleware, settings=cfg, limiter=limiter)
+    # Guard runs inside CORS so 413/429/503 responses still carry CORS headers while running before multipart parsing
+    application.add_middleware(UploadGuardMiddleware, settings=cfg, limiter=limiter, manager=manager)
     application.add_middleware(
         CORSMiddleware,
         allow_origins=list(cfg.cors_allow_origins),
@@ -410,6 +460,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
         tags=['Jobs'],
     )
     async def submit_convert_job(
+        request: Request,
         source_font: Annotated[UploadFile, File(description='來源字型檔 (.ttf / .otf / .ttc / .woff2)')],
         fallback_font: Annotated[Optional[UploadFile], File(description='選填備用字型檔 (.ttf / .otf / .ttc / .woff2)')] = None,
         name_header_file: Annotated[Optional[UploadFile], File(description='選填進階字型名稱 JSON 設定檔')] = None,
@@ -424,7 +475,8 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
         output_woff2: Annotated[bool, Form()] = False,
         kobo_mode: Annotated[bool, Form()] = False,
     ):
-        job_id, job_dir = manager.create_job_dir()
+        release_upload_slot = request.scope.get('opencc_upload_release')
+        job_id, job_dir = manager.create_job_dir(already_admitted=release_upload_slot is not None)
         inputs_dir = job_dir / 'inputs'
         try:
             remaining = cfg.max_total_upload_bytes
@@ -473,7 +525,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
                 'output_woff2': output_woff2,
                 'kobo_mode': kobo_mode,
             }
-            return manager.submit_job(job_id, 'convert', spec, summary)
+            return manager.submit_job(job_id, 'convert', spec, summary, release_upload_slot=release_upload_slot)
         except BaseException:
             manager.release_pending_job(job_id)
             raise
@@ -485,13 +537,15 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
         tags=['Jobs'],
     )
     async def submit_rotate90_job(
+        request: Request,
         source_font: Annotated[UploadFile, File(description='來源字型檔 (.ttf / .otf / .ttc)')],
         direction: Annotated[DirectionChoice, Form()] = 'ccw',
         rotate_all: Annotated[bool, Form()] = False,
         ttc_index: Annotated[Optional[int], Form(ge=0)] = None,
         kobo_mode: Annotated[bool, Form()] = False,
     ):
-        job_id, job_dir = manager.create_job_dir()
+        release_upload_slot = request.scope.get('opencc_upload_release')
+        job_id, job_dir = manager.create_job_dir(already_admitted=release_upload_slot is not None)
         inputs_dir = job_dir / 'inputs'
         try:
             src_path, _ = await save_upload_file_checked(
@@ -512,7 +566,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
                 'rotate_all': rotate_all,
                 'kobo_mode': kobo_mode,
             }
-            return manager.submit_job(job_id, 'rotate90', spec, summary)
+            return manager.submit_job(job_id, 'rotate90', spec, summary, release_upload_slot=release_upload_slot)
         except BaseException:
             manager.release_pending_job(job_id)
             raise
@@ -524,10 +578,12 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
         tags=['Jobs'],
     )
     async def submit_webfont_job(
+        request: Request,
         source_font: Annotated[UploadFile, File(description='來源字型檔 (.ttf / .otf)')],
         font_family: Annotated[Optional[str], Form(max_length=120)] = None,
     ):
-        job_id, job_dir = manager.create_job_dir()
+        release_upload_slot = request.scope.get('opencc_upload_release')
+        job_id, job_dir = manager.create_job_dir(already_admitted=release_upload_slot is not None)
         inputs_dir = job_dir / 'inputs'
         try:
             src_path, _ = await save_upload_file_checked(
@@ -543,7 +599,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
                 'source_filename': src_path.name,
                 'font_family': spec['params']['font_family'] or src_path.stem,
             }
-            return manager.submit_job(job_id, 'webfont', spec, summary)
+            return manager.submit_job(job_id, 'webfont', spec, summary, release_upload_slot=release_upload_slot)
         except BaseException:
             manager.release_pending_job(job_id)
             raise
@@ -555,6 +611,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
         tags=['Jobs'],
     )
     async def submit_static_family_job(
+        request: Request,
         source_files: Annotated[List[UploadFile], File(description='多字重來源字型檔（支援多檔或 .zip 壓縮包）')],
         fallback_files: Annotated[Optional[List[UploadFile]], File(description='選填備用字型群（支援多檔或 .zip 壓縮包）')] = None,
         fallback_prefix: Annotated[Optional[str], Form(max_length=80)] = None,
@@ -568,7 +625,8 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
         kobo_mode: Annotated[bool, Form()] = False,
     ):
         clean_prefix = _validate_safe_prefix(fallback_prefix, 'fallback_prefix')
-        job_id, job_dir = manager.create_job_dir()
+        release_upload_slot = request.scope.get('opencc_upload_release')
+        job_id, job_dir = manager.create_job_dir(already_admitted=release_upload_slot is not None)
         inputs_dir = job_dir / 'inputs'
         source_dir = inputs_dir / 'source'
         fallback_dir = inputs_dir / 'fallback'
@@ -581,6 +639,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
             )
             src_list, src_bytes = await _ingest_font_collection(
                 source_files, source_dir, FONT_EXTENSIONS, '來源字型', cfg.max_file_bytes, remaining, budget,
+                extract_semaphore=extract_semaphore,
             )
             if not src_list:
                 raise HTTPException(status_code=400, detail='請至少上傳一個有效的來源字型檔或包含字型的 ZIP。')
@@ -590,6 +649,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
             if fallback_files:
                 fb_list, _ = await _ingest_font_collection(
                     fallback_files, fallback_dir, FONT_EXTENSIONS, '備用字型', cfg.max_file_bytes, remaining, budget,
+                    extract_semaphore=extract_semaphore,
                 )
 
             spec = {
@@ -614,7 +674,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
                 'family_name_prefix': spec['params']['family_name_prefix'],
                 'output_woff2': output_woff2,
             }
-            return manager.submit_job(job_id, 'static-family', spec, summary)
+            return manager.submit_job(job_id, 'static-family', spec, summary, release_upload_slot=release_upload_slot)
         except BaseException:
             manager.release_pending_job(job_id)
             raise
@@ -626,6 +686,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
         tags=['Jobs'],
     )
     async def submit_variable_family_job(
+        request: Request,
         source_font: Annotated[UploadFile, File(description='可變字型主檔（需含 fvar / wght 軸）')],
         fallback_files: Annotated[List[UploadFile], File(description='對應字重備用字型群（多檔或 .zip，例如 NotoSansTC-Regular.ttf）')],
         fallback_prefix: Annotated[str, Form(max_length=80)] = 'NotoSansTC',
@@ -647,7 +708,8 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
                 )
             selected_weights = parsed
 
-        job_id, job_dir = manager.create_job_dir()
+        release_upload_slot = request.scope.get('opencc_upload_release')
+        job_id, job_dir = manager.create_job_dir(already_admitted=release_upload_slot is not None)
         inputs_dir = job_dir / 'inputs'
         fallback_dir = inputs_dir / 'fallback'
         try:
@@ -664,6 +726,7 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
 
             fb_list, _ = await _ingest_font_collection(
                 fallback_files, fallback_dir, WEBFONT_EXTENSIONS, '備用字型', cfg.max_file_bytes, remaining, budget,
+                extract_semaphore=extract_semaphore,
             )
             if not fb_list:
                 raise HTTPException(status_code=400, detail='可變字型家族模式必須提供至少一個對應字重的備用字型檔。')
@@ -687,13 +750,17 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
                 'weights': selected_weights or VALID_WEIGHT_NAMES,
                 'config': config,
             }
-            return manager.submit_job(job_id, 'variable-family', spec, summary)
+            return manager.submit_job(job_id, 'variable-family', spec, summary, release_upload_slot=release_upload_slot)
         except BaseException:
             manager.release_pending_job(job_id)
             raise
 
     @application.get('/api/v1/jobs', response_model=List[JobResponse], tags=['Jobs'])
-    def query_jobs(ids: Annotated[Optional[str], Query(description='以逗號分隔要查詢的 job_id（最多 30 筆）')] = None):
+    def query_jobs(
+        response: Response,
+        ids: Annotated[Optional[str], Query(description='以逗號分隔要查詢的 job_id（最多 30 筆）')] = None,
+    ):
+        response.headers['Cache-Control'] = 'private, no-store'
         if not ids:
             return []
         job_ids = [item.strip() for item in ids.split(',') if item.strip()][:30]
@@ -705,7 +772,8 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
         return results
 
     @application.get('/api/v1/jobs/{job_id}', response_model=JobResponse, tags=['Jobs'])
-    def get_job_status(job_id: str):
+    def get_job_status(job_id: str, response: Response):
+        response.headers['Cache-Control'] = 'private, no-store'
         job = manager.get_job(job_id)
         if not job:
             raise HTTPException(status_code=404, detail='找不到指定的任務 ID 或任務已過期清除。')
@@ -713,13 +781,25 @@ def create_app(settings: Optional[WebSettings] = None) -> FastAPI:
 
     @application.get('/api/v1/jobs/{job_id}/download', tags=['Jobs'])
     def download_primary_artifact(job_id: str):
-        file_path, filename = manager.get_artifact_path(job_id)
-        return FileResponse(path=file_path, filename=filename, media_type='application/octet-stream')
+        file_path, filename, release = manager.get_artifact_for_download(job_id)
+        return FileResponse(
+            path=file_path,
+            filename=filename,
+            media_type='application/octet-stream',
+            headers=NO_STORE_HEADERS,
+            background=BackgroundTask(release),
+        )
 
     @application.get('/api/v1/jobs/{job_id}/artifacts/{filename}', tags=['Jobs'])
     def download_specific_artifact(job_id: str, filename: str):
-        file_path, resolved_name = manager.get_artifact_path(job_id, filename=filename)
-        return FileResponse(path=file_path, filename=resolved_name, media_type='application/octet-stream')
+        file_path, resolved_name, release = manager.get_artifact_for_download(job_id, filename=filename)
+        return FileResponse(
+            path=file_path,
+            filename=resolved_name,
+            media_type='application/octet-stream',
+            headers=NO_STORE_HEADERS,
+            background=BackgroundTask(release),
+        )
 
     @application.delete('/api/v1/jobs/{job_id}', tags=['Jobs'])
     def delete_or_cancel_job(job_id: str):

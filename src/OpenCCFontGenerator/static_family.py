@@ -2,7 +2,7 @@ import os
 from os import path
 import re
 
-from .font import build_font
+from .font import build_font, detect_output_extension
 
 
 SUPPORTED_EXTENSIONS = ('.ttf', '.otf', '.ttc', '.woff2')
@@ -18,6 +18,16 @@ WEIGHT_ALIASES = {
     "ExtraBold": ("extrabold", "extra-bold", "ultrabold", "ultra-bold", "heavy"),
     "Black": ("black",),
 }
+
+_SORTED_WEIGHT_ALIASES = sorted(
+    (
+        (re.sub(r"[^a-z0-9]+", "", alias), canonical_name)
+        for canonical_name, aliases in WEIGHT_ALIASES.items()
+        for alias in aliases
+    ),
+    key=lambda item: len(item[0]),
+    reverse=True,
+)
 
 
 def sanitize_filename_part(value):
@@ -58,10 +68,9 @@ def collect_source_fonts(input_path):
 
 def detect_weight_from_filename(filename):
     normalized = re.sub(r"[^a-z0-9]+", "", path.basename(filename).lower())
-    for canonical_name, aliases in WEIGHT_ALIASES.items():
-        for alias in aliases:
-            if re.sub(r"[^a-z0-9]+", "", alias) in normalized:
-                return canonical_name
+    for alias_norm, canonical_name in _SORTED_WEIGHT_ALIASES:
+        if alias_norm in normalized:
+            return canonical_name
     return "Regular"
 
 
@@ -76,8 +85,9 @@ def collect_fallback_candidates(fallback_dir, fallback_prefix=None):
             file_path for file_path in files
             if path.basename(file_path).lower().startswith(fallback_prefix.lower())
         ]
-        if filtered:
-            files = filtered
+        if not filtered:
+            raise ValueError(f"fallback 資料夾中找不到檔名前綴為 '{fallback_prefix}' 的字型檔。")
+        files = filtered
     if not files:
         raise ValueError("fallback 資料夾中沒有找到符合條件的字型檔。")
     return files
@@ -120,20 +130,20 @@ def build_static_cjk_family(
 
     os.makedirs(output_dir, exist_ok=True)
     results = []
-    used_names = set()
+    used_stems = set()
 
     for source_file in source_files:
         base_name = path.basename(source_file)
         stem, ext = path.splitext(base_name)
         safe_stem = sanitize_filename_part(stem)
-        out_ext = _resolve_output_extension(ext)
-        candidate_name = f"{safe_stem}_TC{out_ext}"
+        out_ext = detect_output_extension(source_file) if path.isfile(source_file) else _resolve_output_extension(ext)
+        candidate_stem = f"{safe_stem}_TC"
         idx = 2
-        while candidate_name.lower() in used_names:
-            candidate_name = f"{safe_stem}_{idx}_TC{out_ext}"
+        while candidate_stem.lower() in used_stems:
+            candidate_stem = f"{safe_stem}_{idx}_TC"
             idx += 1
-        used_names.add(candidate_name.lower())
-        output_file = path.join(output_dir, candidate_name)
+        used_stems.add(candidate_stem.lower())
+        output_file = path.join(output_dir, f"{candidate_stem}{out_ext}")
         fallback_font = find_fallback_for_source(source_file, fallback_candidates) if fallback_candidates else None
 
         build_font(
@@ -154,6 +164,7 @@ def build_static_cjk_family(
             "source_file": source_file,
             "fallback_font": fallback_font,
             "output_file": output_file,
+            "woff2_file": path.join(output_dir, f"{candidate_stem}.woff2") if output_woff2 else None,
             "weight": detect_weight_from_filename(source_file),
         })
 

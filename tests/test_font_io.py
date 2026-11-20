@@ -9,6 +9,7 @@ from unittest import mock
 from OpenCCFontGenerator import font as font_module
 from OpenCCFontGenerator import run90 as run90_module
 from OpenCCFontGenerator import static_family as static_family_module
+from OpenCCFontGenerator import vf_family as vf_family_module
 from OpenCCFontGenerator import webfont as webfont_module
 
 
@@ -407,10 +408,250 @@ class PreDeployFixTests(unittest.TestCase):
         self.assertIn("font-family: 'MiniSpecimen';", normal_css)
         self.assertIn("src: url('MiniSpecimen.woff2') format('woff2');", normal_css)
 
-        tricky_css = webfont_module.generate_css_template("/tmp/a'b.woff2", "Bad'Font\\x\n*/body{}")
+        tricky_css = webfont_module.generate_css_template("/tmp/a'b.woff2", "Bad'Font\\x\n\f*/body{}")
         self.assertIn("font-family: 'Bad\\'Font\\\\x *\\/body{}';", tricky_css)
-        self.assertIn("src: url('a\\'b.woff2') format('woff2');", tricky_css)
+        self.assertIn("src: url('a%27b.woff2') format('woff2');", tricky_css)
         self.assertNotIn("*/body{}", tricky_css)
+
+    def test_ensure_gsub_feature_targets_merges_required_feature_without_duplicate(self):
+        obj = {
+            'GSUB': {
+                'languages': {
+                    'DFLT_dflt': {'requiredFeature': 'rlig_00001', 'features': ['rlig_00002', 'liga_00003']},
+                },
+                'features': {
+                    'rlig_00001': ['req_lookup'],
+                    'rlig_00002': ['opt_lookup'],
+                    'liga_00003': ['liga_lookup'],
+                },
+                'lookups': {},
+                'lookupOrder': ['req_lookup', 'opt_lookup', 'liga_lookup'],
+            }
+        }
+        font_module.create_word2pseu_table(obj, ['liga', 'rlig'], [(['a', 'b'], 'pseu0')])
+        dflt = obj['GSUB']['languages']['DFLT_dflt']
+        self.assertEqual(dflt['requiredFeature'], 'rlig_00001')
+        self.assertEqual(dflt['features'], ['liga_00003'])
+        self.assertEqual(obj['GSUB']['features']['rlig_00001'], ['req_lookup', 'opt_lookup', 'word2pseu'])
+
+    def test_apply_force_vertical_supports_indexed_feature_lists(self):
+        obj = {
+            'cmap': {str(ord('。')): 'period_h'},
+            'cmap_rev': {'period_h': [str(ord('。'))]},
+            'GSUB': {
+                'features': {'vert_00001': ['vert_lookup']},
+                'lookups': {
+                    'vert_lookup': {
+                        'type': 'gsub_single',
+                        'subtables': [{'period_h': 'period_v'}],
+                    }
+                },
+            },
+        }
+        font_module.apply_force_vertical(obj)
+        self.assertEqual(obj['cmap'][str(ord('。'))], 'period_v')
+        self.assertEqual(obj['cmap_rev']['period_v'], [str(ord('。'))])
+        self.assertNotIn('period_h', obj['cmap_rev'])
+
+    def test_clone_fallback_glyph_renames_colliding_glyphs(self):
+        primary = {
+            'glyf': {'.notdef': {}, 'gid10': {'contours': [[{'x': 0, 'y': 0, 'on': True}]]}},
+            'glyph_order': ['.notdef', 'gid10'],
+            'hmtx': {'gid10': {'advanceWidth': 500, 'lsb': 0}},
+        }
+        fallback = {
+            'glyf': {'gid10': {'contours': [[{'x': 100, 'y': 200, 'on': True}]]}},
+            'hmtx': {'gid10': {'advanceWidth': 1000, 'lsb': 50}},
+        }
+        cloned_map = {}
+        cloned_name = font_module.clone_fallback_glyph(primary, fallback, 'gid10', cloned_map)
+        self.assertEqual(cloned_name, 'fallback_gid10_1')
+        self.assertEqual(primary['glyf']['gid10']['contours'][0][0]['x'], 0)
+        self.assertEqual(primary['glyf']['fallback_gid10_1']['contours'][0][0]['x'], 100)
+        self.assertEqual(primary['hmtx']['fallback_gid10_1']['advanceWidth'], 1000)
+
+    def test_apply_variants_isolates_homograph_groups(self):
+        obj = {
+            'cmap': {
+                str(ord('後')): 'g_hou_t',
+                str(ord('面')): 'g_mian',
+                str(ord('臺')): 'g_tai',
+                str(ord('餘')): 'g_yu_t',
+                str(ord('你')): 'g_ni',
+            },
+            'cmap_rev': {
+                'g_hou_t': [str(ord('後'))],
+                'g_mian': [str(ord('面'))],
+                'g_tai': [str(ord('臺'))],
+                'g_yu_t': [str(ord('餘'))],
+                'g_ni': [str(ord('你'))],
+            },
+        }
+        font_module.apply_variants(obj, config='s2t')
+        self.assertNotIn(str(ord('后')), obj['cmap'])
+        self.assertNotIn(str(ord('麵')), obj['cmap'])
+        self.assertNotIn(str(ord('檯')), obj['cmap'])
+        self.assertNotIn(str(ord('颱')), obj['cmap'])
+        self.assertNotIn(str(ord('余')), obj['cmap'])
+        self.assertEqual(obj['cmap'].get(str(ord('妳'))), 'g_ni')
+
+        obj_noodle = {
+            'cmap': {str(ord('麪')): 'g_noodle'},
+            'cmap_rev': {'g_noodle': [str(ord('麪'))]},
+        }
+        font_module.apply_variants(obj_noodle, config='s2t')
+        self.assertEqual(obj_noodle['cmap'].get(str(ord('麵'))), 'g_noodle')
+        self.assertNotIn(str(ord('面')), obj_noodle['cmap'])
+
+    def test_save_font_raises_when_woff2_compression_fails(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out_path = os.path.join(directory, 'out.ttf')
+            prev_cwd = os.getcwd()
+            os.chdir(directory)
+            try:
+                def fake_run(command, **kwargs):
+                    Path(command[2]).write_bytes(b'built-ttf')
+                    return subprocess.CompletedProcess(command, 0)
+
+                class BrokenWoff2Font:
+                    def save(self, _path):
+                        raise OSError('woff2 encode error')
+                    def close(self):
+                        pass
+
+                with mock.patch.object(font_module.subprocess, 'run', side_effect=fake_run), \
+                     mock.patch.object(font_module, 'normalize_generated_font'), \
+                     mock.patch.object(font_module, 'validate_font_output'), \
+                     mock.patch.object(font_module, 'TTFont', return_value=BrokenWoff2Font()):
+                    with self.assertRaises(OSError):
+                        font_module.save_font({'cmap': {}, 'cmap_rev': {}}, out_path, output_woff2=True)
+                self.assertFalse(Path(directory, 'out.woff2').exists())
+            finally:
+                os.chdir(prev_cwd)
+
+    def test_static_family_weight_alias_prefix_and_woff2_stem_dedup(self):
+        self.assertEqual(static_family_module.detect_weight_from_filename('MyFont-ExtraBold.ttf'), 'ExtraBold')
+        self.assertEqual(static_family_module.detect_weight_from_filename('MyFont-SemiBold.otf'), 'SemiBold')
+
+        with tempfile.TemporaryDirectory() as directory:
+            src_dir = Path(directory) / 'src'
+            fb_dir = Path(directory) / 'fb'
+            out_dir = Path(directory) / 'out'
+            src_dir.mkdir()
+            fb_dir.mkdir()
+            out_dir.mkdir()
+            (src_dir / 'Font.ttf').write_bytes(b'ttf')
+            (src_dir / 'Font.otf').write_bytes(b'otf')
+            (fb_dir / 'Other-Regular.ttf').write_bytes(b'fb')
+
+            with self.assertRaises(ValueError):
+                static_family_module.collect_fallback_candidates(str(fb_dir), fallback_prefix='NotoSansTC')
+
+            called = []
+            with mock.patch.object(static_family_module, 'build_font', side_effect=lambda **kw: called.append(kw['output_file'])):
+                results = static_family_module.build_static_cjk_family(str(src_dir), str(out_dir), output_woff2=True)
+            stems = {Path(r['output_file']).stem for r in results}
+            woff2s = {Path(r['woff2_file']).name for r in results}
+            self.assertEqual(stems, {'Font_TC', 'Font_2_TC'})
+            self.assertEqual(woff2s, {'Font_TC.woff2', 'Font_2_TC.woff2'})
+            self.assertEqual(len(called), 2)
+
+    def test_run90_composite_rotation_and_glyph_advance_width(self):
+        # UPM=2000 -> center=(1000, 1000). Verify advanceWidth and composite math for cw rotation.
+        base_pt = (400, 600)
+        M = ((1.5, 0.0), (0.0, 0.5))
+        T = (100, 200)
+        # Original composite world point: M * base_pt + T = (700, 500)
+        # CW around (1000, 1000): (y - 1000 + 1000, -(x - 1000) + 1000) = (500, 1300)
+        font_obj = {
+            'head': {'unitsPerEm': 2000},
+            'OS/2': {},
+            'hhea': {},
+            'name': [{'nameID': 1, 'nameString': 'TestRot'}],
+            'cmap': {str(ord('漢')): 'han_base', str(ord('字')): 'han_comp', str(ord('A')): 'latin_comp'},
+            'hmtx': {
+                'han_base': {'advanceWidth': 1200, 'lsb': 10},
+                'han_comp': {'advanceWidth': 1200, 'lsb': 10},
+                'latin_comp': {'advanceWidth': 900, 'lsb': 20},
+            },
+            'glyf': {
+                'han_base': {'contours': [[{'x': base_pt[0], 'y': base_pt[1], 'on': True}]]},
+                'han_comp': {'references': [{'glyph': 'han_base', 'x': T[0], 'y': T[1], 'a': M[0][0], 'b': M[0][1], 'c': M[1][0], 'd': M[1][1]}]},
+                'latin_comp': {'references': [{'glyph': 'han_base', 'x': T[0], 'y': T[1], 'a': M[0][0], 'b': M[0][1], 'c': M[1][0], 'd': M[1][1]}]},
+            },
+        }
+        saved = []
+        with mock.patch.object(run90_module, 'load_font_json', return_value=font_obj), \
+             mock.patch.object(run90_module, 'save_font_json', side_effect=lambda obj, out: saved.append(obj)):
+            run90_module.process_rotation('in.ttf', 'out.ttf', direction='cw')
+
+        out = saved[0]
+        self.assertEqual(out['glyf']['han_base']['advanceWidth'], 2000)
+        self.assertNotIn('advanceWidth', out['glyf']['latin_comp'])
+        self.assertEqual(out['hmtx']['latin_comp']['advanceWidth'], 900)
+        self.assertEqual(out['OS/2']['usWinAscent'], 2000)
+        self.assertEqual(out['hhea']['ascent'], 2000)
+
+        # Rotated han_base point: (600, 1600)
+        rot_base_pt = (out['glyf']['han_base']['contours'][0][0]['x'], out['glyf']['han_base']['contours'][0][0]['y'])
+        self.assertEqual(rot_base_pt, (600, 1600))
+
+        # Both han_comp and han_base rotated -> transformed rot_base_pt must equal R_cw(700, 500) = (500, 1300)
+        r_han = out['glyf']['han_comp']['references'][0]
+        px = r_han['a'] * rot_base_pt[0] + r_han['b'] * rot_base_pt[1] + r_han['x']
+        py = r_han['c'] * rot_base_pt[0] + r_han['d'] * rot_base_pt[1] + r_han['y']
+        self.assertAlmostEqual(px, 500)
+        self.assertAlmostEqual(py, 1300)
+
+        # latin_comp NOT rotated while han_base IS rotated -> must recover original world point (700, 500)
+        r_lat = out['glyf']['latin_comp']['references'][0]
+        lx = r_lat['a'] * rot_base_pt[0] + r_lat['b'] * rot_base_pt[1] + r_lat['x']
+        ly = r_lat['c'] * rot_base_pt[0] + r_lat['d'] * rot_base_pt[1] + r_lat['y']
+        self.assertAlmostEqual(lx, 700)
+        self.assertAlmostEqual(ly, 500)
+
+    def test_vf_family_validates_wght_bounds_and_handles_missing_stat(self):
+        from fontTools.fontBuilder import FontBuilder
+        from fontTools.pens.ttGlyphPen import TTGlyphPen
+        from fontTools.ttLib.tables.TupleVariation import TupleVariation
+
+        with tempfile.TemporaryDirectory() as directory:
+            vf_path = Path(directory) / 'MiniVF.ttf'
+            fb_dir = Path(directory) / 'fb'
+            out_dir = Path(directory) / 'out'
+            fb_dir.mkdir()
+            (fb_dir / 'NotoSansTC-Regular.ttf').write_bytes(b'fb')
+            (fb_dir / 'NotoSansTC-Black.ttf').write_bytes(b'fb')
+
+            fb = FontBuilder(1000, isTTF=True)
+            fb.setupGlyphOrder(['.notdef', 'A'])
+            fb.setupCharacterMap({65: 'A'})
+            glyf_map = {}
+            metrics = {}
+            for name in ('.notdef', 'A'):
+                pen = TTGlyphPen(None)
+                pen.moveTo((100, 0)); pen.lineTo((100, 700)); pen.lineTo((600, 700)); pen.lineTo((600, 0)); pen.closePath()
+                glyf_map[name] = pen.glyph()
+                metrics[name] = (700, 100)
+            fb.setupGlyf(glyf_map)
+            fb.setupHorizontalMetrics(metrics)
+            fb.setupHorizontalHeader(ascent=850, descent=-150)
+            fb.setupNameTable({'familyName': 'MiniVF', 'styleName': 'Regular'})
+            fb.setupOS2()
+            fb.setupPost()
+            fb.setupFvar(axes=[('wght', 300, 400, 700, 'Weight')], instances=[])
+            fb.setupGvar({'.notdef': [], 'A': [TupleVariation({'wght': (0.0, 1.0, 1.0)}, [(50, 0), (50, 0), (100, 0), (100, 0), (0, 0), (0, 0), (0, 0), (0, 0)])]})
+            fb.font.save(str(vf_path))
+            fb.font.close()
+
+            inst_out = Path(directory) / 'inst_bold.ttf'
+            vf_family_module.instantiate_variable_font(str(vf_path), str(inst_out), {'wght': 700})
+            self.assertTrue(inst_out.is_file())
+
+            with self.assertRaises(ValueError):
+                vf_family_module.build_variable_cjk_family(
+                    str(vf_path), str(out_dir), str(fb_dir), weights=['Black'],
+                )
 
 
 if __name__ == '__main__':

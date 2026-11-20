@@ -38,8 +38,10 @@ class WebSettings:
     max_file_mb: int = 80
     max_total_upload_mb: int = 240
     max_extracted_mb: int = 320
-    max_concurrent_jobs: int = 2
+    max_concurrent_jobs: int = 1
+    max_concurrent_uploads: int = 4
     max_queued_jobs: int = 20
+    min_free_disk_mb: int = 512
     job_ttl_seconds: int = 7200
     job_timeout_seconds: int = 600
     cleanup_interval_seconds: int = 60
@@ -62,6 +64,10 @@ class WebSettings:
     def max_extracted_bytes(self) -> int:
         return self.max_extracted_mb * 1024 * 1024
 
+    @property
+    def min_free_disk_bytes(self) -> int:
+        return self.min_free_disk_mb * 1024 * 1024
+
     @classmethod
     def from_env(cls) -> 'WebSettings':
         """Build WebSettings from OPENCC_WEB_* environment variables."""
@@ -76,8 +82,10 @@ class WebSettings:
             max_file_mb=_env_int('OPENCC_WEB_MAX_FILE_MB', 80, minimum=1),
             max_total_upload_mb=_env_int('OPENCC_WEB_MAX_TOTAL_UPLOAD_MB', 240, minimum=1),
             max_extracted_mb=_env_int('OPENCC_WEB_MAX_EXTRACTED_MB', 320, minimum=1),
-            max_concurrent_jobs=_env_int('OPENCC_WEB_MAX_CONCURRENT_JOBS', 2, minimum=1),
+            max_concurrent_jobs=_env_int('OPENCC_WEB_MAX_CONCURRENT_JOBS', 1, minimum=1),
+            max_concurrent_uploads=_env_int('OPENCC_WEB_MAX_CONCURRENT_UPLOADS', 4, minimum=1),
             max_queued_jobs=_env_int('OPENCC_WEB_MAX_QUEUED_JOBS', 20, minimum=1),
+            min_free_disk_mb=_env_int('OPENCC_WEB_MIN_FREE_MB', 512, minimum=0),
             job_ttl_seconds=_env_int('OPENCC_WEB_JOB_TTL_SECONDS', 7200, minimum=60),
             job_timeout_seconds=_env_int('OPENCC_WEB_JOB_TIMEOUT_SECONDS', 600, minimum=30),
             cleanup_interval_seconds=_env_int('OPENCC_WEB_CLEANUP_INTERVAL_SECONDS', 60, minimum=10),

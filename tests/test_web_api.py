@@ -464,6 +464,247 @@ class WebApiTests(unittest.TestCase):
             dl_primary = client.get(status_data['download_url'])
             self.assertEqual(dl_primary.status_code, 200)
 
+    def test_pre_multipart_queue_full_and_disk_check(self):
+        from collections import namedtuple
+        DiskUsage = namedtuple('DiskUsage', ('total', 'used', 'free'))
+        limited_settings = WebSettings(
+            storage_dir=Path(self.tmpdir.name) / 'admission',
+            max_file_mb=2,
+            max_total_upload_mb=4,
+            max_concurrent_jobs=1,
+            max_concurrent_uploads=2,
+            max_queued_jobs=1,
+            min_free_disk_mb=1,
+            rate_limit_per_min=50,
+        )
+        limited_app = create_app(limited_settings)
+        mgr = limited_app.state.job_manager
+        with TestClient(limited_app) as client:
+            jid, _ = mgr.create_job_dir()
+            try:
+                resp_full = client.post(
+                    '/api/v1/jobs/webfont',
+                    files={'source_font': ('font.ttf', _build_minimal_ttf_bytes(), 'font/ttf')},
+                )
+                self.assertEqual(resp_full.status_code, 503)
+            finally:
+                mgr.release_pending_job(jid)
+
+            with patch('OpenCCFontGenerator.web.jobs.shutil.disk_usage', return_value=DiskUsage(1000, 900, 100)):
+                resp_disk = client.post(
+                    '/api/v1/jobs/webfont',
+                    files={'source_font': ('font.ttf', _build_minimal_ttf_bytes(), 'font/ttf')},
+                )
+                self.assertEqual(resp_disk.status_code, 507)
+
+    def test_zip_eocd_entry_limit_encrypted_and_bad_compression_return_400(self):
+        from fastapi import HTTPException
+        # 1. > 64 entries including directory entries rejected by EOCD guard before ZipFile parsing
+        z_many = Path(self.tmpdir.name) / 'many_dirs.zip'
+        with zipfile.ZipFile(z_many, 'w') as zf:
+            for i in range(65):
+                zf.writestr(f'dir_{i}/', b'')
+            zf.writestr('font.ttf', b'dummy')
+
+        out_dir = Path(self.tmpdir.name) / 'zip_out'
+        with self.assertRaises(HTTPException) as ctx_many:
+            extract_fonts_from_zip(z_many, out_dir, {'.ttf'}, 1024 * 1024)
+        self.assertEqual(ctx_many.exception.status_code, 400)
+
+        # 2. Encrypted entry flag rejected with 400
+        z_enc = Path(self.tmpdir.name) / 'enc.zip'
+        enc_buf = io.BytesIO()
+        with zipfile.ZipFile(enc_buf, 'w') as zf:
+            zf.writestr('secret.ttf', b'data')
+        enc_raw = bytearray(enc_buf.getvalue())
+        loc = enc_raw.index(b'PK\x03\x04')
+        enc_raw[loc + 6] |= 0x1
+        cd = enc_raw.index(b'PK\x01\x02')
+        enc_raw[cd + 8] |= 0x1
+        z_enc.write_bytes(bytes(enc_raw))
+        with self.assertRaises(HTTPException) as ctx_enc:
+            extract_fonts_from_zip(z_enc, out_dir, {'.ttf'}, 1024 * 1024)
+        self.assertEqual(ctx_enc.exception.status_code, 400)
+
+        # 3. Unsupported compression method (LZMA) rejected with 400
+        z_lzma = Path(self.tmpdir.name) / 'lzma.zip'
+        with zipfile.ZipFile(z_lzma, 'w', compression=zipfile.ZIP_LZMA) as zf:
+            zf.writestr('font.ttf', b'data')
+        with self.assertRaises(HTTPException) as ctx_lzma:
+            extract_fonts_from_zip(z_lzma, out_dir, {'.ttf'}, 1024 * 1024)
+        self.assertEqual(ctx_lzma.exception.status_code, 400)
+
+    def test_proxy_ip_normalization_and_rate_limiter_bounded_capacity(self):
+        trusted_nets = _parse_trusted_networks(('10.0.0.0/8',))
+        ipv6_scope = {
+            'type': 'http',
+            'client': ('10.0.0.2', 12345),
+            'headers': [(b'x-forwarded-for', b'2001:0db8:0000:0000:0000:0000:0000:0001, 10.0.0.5')],
+        }
+        self.assertEqual(_client_ip_from_scope(ipv6_scope, True, trusted_nets), '2001:db8::1')
+
+        bad_xff_scope = {
+            'type': 'http',
+            'client': ('10.0.0.2', 12345),
+            'headers': [(b'x-forwarded-for', b'not-an-ip, 10.0.0.5')],
+        }
+        self.assertEqual(_client_ip_from_scope(bad_xff_scope, True, trusted_nets), '10.0.0.2')
+
+        limiter = SlidingWindowRateLimiter(limit_per_minute=2, max_keys=3, prune_interval_seconds=0.0)
+        for i in range(6):
+            limiter.check_and_record(f'192.0.2.{i}', now=100.0 + i)
+        self.assertLessEqual(len(limiter._hits), 3)
+
+    def test_job_manager_rollback_zero_byte_reject_cleanup_and_download_lease(self):
+        # 1. Zero-byte artifact rejected by worker._register_outputs
+        zero_file = Path(self.tmpdir.name) / 'empty.ttf'
+        zero_file.write_bytes(b'')
+        with self.assertRaises(RuntimeError):
+            worker_module._register_outputs(Path(self.tmpdir.name), [zero_file], zero_file, required_paths=[zero_file])
+
+        # 2. submit_job rolls back memory queues if executor fails
+        mgr = JobManager(self.settings)
+        try:
+            jid, _ = mgr.create_job_dir()
+            with patch.object(mgr._executor, 'submit', side_effect=RuntimeError('pool down')):
+                with self.assertRaises(RuntimeError):
+                    mgr.submit_job(jid, 'webfont', {'input_file': 'x.ttf', 'params': {}}, {})
+            self.assertEqual(mgr.counts(), (0, 0))
+            mgr.release_pending_job(jid)
+
+            # 3. Download lease defers directory deletion until released
+            jid_dl, jdir_dl = mgr.create_job_dir()
+            out_file = jdir_dl / 'outputs' / 'font.woff2'
+            out_file.write_bytes(b'woff2-bytes')
+            mgr._jobs[jid_dl] = {
+                'job_id': jid_dl,
+                'mode': 'webfont',
+                'status': 'completed',
+                'phase': 'completed',
+                'created_at': '2026-11-20T00:00:00+00:00',
+                'expires_at': '2099-11-20T00:00:00+00:00',
+                'artifacts': [{'filename': 'font.woff2', 'size_bytes': 11, 'kind': 'woff2', 'primary': True}],
+                'summary': {},
+            }
+            path, resolved_name, release = mgr.get_artifact_for_download(jid_dl)
+            self.assertEqual(resolved_name, 'font.woff2')
+            self.assertTrue(mgr.delete_job(jid_dl))
+            self.assertTrue(path.is_file())
+            release()
+            self.assertFalse(jdir_dl.exists())
+        finally:
+            mgr.shutdown()
+
+    def test_no_store_headers_high_entropy_id_and_long_cjk_filename(self):
+        long_name = ('測試中文極長字型名稱' * 12) + '.ttf'
+        ttf_bytes = _build_minimal_ttf_bytes()
+        with TestClient(self.app) as client:
+            submit = client.post(
+                '/api/v1/jobs/webfont',
+                files={'source_font': (long_name, ttf_bytes, 'font/ttf')},
+                data={'font_family': 'LongCJK'},
+            )
+            self.assertEqual(submit.status_code, 202, submit.text)
+            job_id = submit.json()['job_id']
+            self.assertRegex(job_id, r'^[a-f0-9]{32}$')
+
+            deadline = time.time() + 30
+            status_data = None
+            while time.time() < deadline:
+                poll = client.get(f'/api/v1/jobs/{job_id}')
+                self.assertEqual(poll.headers.get('Cache-Control'), 'private, no-store')
+                status_data = poll.json()
+                if status_data['status'] in ('completed', 'failed'):
+                    break
+                time.sleep(0.15)
+
+            self.assertEqual(status_data['status'], 'completed', status_data)
+            for art in status_data['artifacts']:
+                self.assertLessEqual(len(art['filename'].encode('utf-8')), 255)
+            dl = client.get(status_data['download_url'])
+            self.assertEqual(dl.status_code, 200)
+            self.assertEqual(dl.headers.get('Cache-Control'), 'private, no-store')
+
+    def test_variable_family_end_to_end_when_otfcc_present(self):
+        with TestClient(self.app) as client:
+            health = client.get('/healthz').json()
+            if not (health['otfccdump_available'] and health['otfccbuild_available'] and health['cache_ready']):
+                self.skipTest('otfcc binaries or OpenCC cache missing in test environment')
+
+            from fontTools.ttLib.tables.TupleVariation import TupleVariation
+            fb = FontBuilder(1000, isTTF=True)
+            fb.setupGlyphOrder(['.notdef', 'A'])
+            fb.setupCharacterMap({65: 'A'})
+            glyf_map = {}
+            metrics = {}
+            for name in ('.notdef', 'A'):
+                pen = TTGlyphPen(None)
+                pen.moveTo((100, 0)); pen.lineTo((100, 700)); pen.lineTo((600, 700)); pen.lineTo((600, 0)); pen.closePath()
+                glyf_map[name] = pen.glyph()
+                metrics[name] = (700, 100)
+            fb.setupGlyf(glyf_map)
+            fb.setupHorizontalMetrics(metrics)
+            fb.setupHorizontalHeader(ascent=850, descent=-150)
+            fb.setupNameTable({'familyName': 'MiniVF', 'styleName': 'Regular'})
+            fb.setupOS2()
+            fb.setupPost()
+            fb.setupFvar(axes=[('wght', 300, 400, 700, 'Weight')], instances=[])
+            fb.setupGvar({'.notdef': [], 'A': [TupleVariation({'wght': (0.0, 1.0, 1.0)}, [(50, 0), (50, 0), (100, 0), (100, 0), (0, 0), (0, 0), (0, 0), (0, 0)])]})
+            vf_buf = io.BytesIO()
+            fb.font.save(vf_buf)
+            fb.font.close()
+
+            submit = client.post(
+                '/api/v1/jobs/variable-family',
+                files=[
+                    ('source_font', ('MiniVF.ttf', vf_buf.getvalue(), 'font/ttf')),
+                    ('fallback_files', ('NotoSansTC-Regular.ttf', _build_minimal_ttf_bytes(), 'font/ttf')),
+                ],
+                data={'fallback_prefix': 'NotoSansTC', 'weights': 'Regular', 'config': 's2tw'},
+            )
+            self.assertEqual(submit.status_code, 202, submit.text)
+            job_id = submit.json()['job_id']
+
+            deadline = time.time() + 60
+            status_data = None
+            while time.time() < deadline:
+                status_data = client.get(f'/api/v1/jobs/{job_id}').json()
+                if status_data['status'] in ('completed', 'failed'):
+                    break
+                time.sleep(0.25)
+
+            self.assertEqual(status_data['status'], 'completed', status_data)
+            dl = client.get(status_data['download_url'])
+            self.assertEqual(dl.status_code, 200)
+            with zipfile.ZipFile(io.BytesIO(dl.content), 'r') as zf:
+                self.assertIn('MiniVF_Regular_TC.ttf', set(zf.namelist()))
+
+    def test_upload_admission_slots_not_double_counted(self):
+        from fastapi import HTTPException
+        admission_settings = WebSettings(
+            storage_dir=Path(self.tmpdir.name) / 'no_double_count',
+            max_concurrent_jobs=1,
+            max_concurrent_uploads=4,
+            max_queued_jobs=2,
+            min_free_disk_mb=0,
+        )
+        manager = JobManager(admission_settings)
+        try:
+            rel1 = manager.acquire_upload_slot()
+            jid1, _ = manager.create_job_dir(already_admitted=True)
+            rel2 = manager.acquire_upload_slot()
+            with self.assertRaises(HTTPException) as ctx:
+                manager.acquire_upload_slot()
+            self.assertEqual(ctx.exception.status_code, 503)
+
+            manager.release_pending_job(jid1)
+            rel1()
+            rel2()
+            self.assertEqual(manager._active_uploads, 0)
+            self.assertEqual(manager._admitted_pending_dirs, set())
+        finally:
+            manager.shutdown()
+
 
 if __name__ == '__main__':
     unittest.main()

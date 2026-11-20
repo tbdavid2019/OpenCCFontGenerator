@@ -13,21 +13,27 @@ All notable changes to OpenCC Font Generator will be documented here.
   - 調整 [.gitignore](.gitignore) 與 [.dockerignore](.dockerignore)，僅忽略上游下載的字典檔而明確保留 `src/OpenCCFontGenerator/opencc_data/Variants.txt`、`Var_tw.txt`、`Var_hk.txt`、`Var_cl.txt`，確保 Docker 映像與遠端部署能正常執行 `apply_variants()` 異體字補字。
 - **修復 `static_family` 中文檔名遺失、非 TTF/OTF 副檔名輸出錯誤與撞名覆蓋**：
   - 更新 [static_family.py](src/OpenCCFontGenerator/static_family.py) 的 `sanitize_filename_part()` 保留中文漢字，新增 `_resolve_output_extension()` 將 `.woff2`/`.ttc` 來源正規化為 `.ttf` 輸出，並於 `build_static_cjk_family()` 去重檔名（衝突時自動加上 `_2`、`_3` 後綴）。
-- **修復 `run90` 編譯失敗未攔截與 Worker 假成功／暫存殘留**：
-  - 更新 [run90.py](src/OpenCCFontGenerator/run90.py) 的 `save_font_json()` 為暫存檔原子建置，強制 `check=True` 與產物非空檢查。
-  - 更新 [worker.py](src/OpenCCFontGenerator/web/worker.py) 的 `_register_outputs()` 禁止空產物回報成功，並於任務結束後自動清理 `inputs/` 及 `static-family` / `variable-family` 中間解包資料夾以節省磁碟空間。
-- **修復 CSS 模板跳脫與非 ASCII 產物下載連結編碼**：
-  - 更新 [webfont.py](src/OpenCCFontGenerator/webfont.py) 新增 `_escape_css_string()` 跳脫 `font-family` 與檔名中的引號、反斜線、換行與 `*/`。
-  - 更新 [jobs.py](src/OpenCCFontGenerator/web/jobs.py) 對 `download_url` 中的產物檔名執行 `urllib.parse.quote` 百分號編碼。
-- **修復 Web 前端輪詢競爭條件與日誌重繪問題**：
-  - 更新 [app.js](src/OpenCCFontGenerator/web/static/app.js)：修正 `fetchStoredJobs()` 快照比對避免移除輪詢期間剛送出的新任務；將 `renderJobs()` 改為依 `job_id` 差異更新，保留日誌 `<details>` 展開狀態與捲動位置；新增上傳檔案大小前端預檢、`lang` 語系標註與 `name_header_file` cURL 預覽。
+- **修復 `run90` 編譯／幾何／度量與 Worker 產物驗證及父行程清理**：
+  - 更新 [run90.py](src/OpenCCFontGenerator/run90.py)：`save_font_json()` 改為暫存檔原子建置並強制 `check=True` 與非空檔檢查；僅對旋轉字形同步寫入 `glyf['advanceWidth']`（保留未旋轉西文比例寬度）、依 `unitsPerEm` 計算旋轉中心與全域度量、預設讀取 `.ttc` 第 0 面，並修正複合字形（`references`）旋轉矩陣與平移對齊。
+  - 更新 [worker.py](src/OpenCCFontGenerator/web/worker.py)：`_register_outputs()` 驗證所有必要產物皆位於 `outputs/`、非符號連結、非空一般檔案，家族模式開啟 `output_woff2` 時亦嚴格要求每個變體均含有效 WOFF2；各模式依實際字型輪廓決定 `.ttf`/`.otf` 副檔名；[font.py](src/OpenCCFontGenerator/font.py) 的 `save_font()` 不再吞掉 WOFF2 壓縮例外且改為暫存原子寫入。
+  - 更新 [jobs.py](src/OpenCCFontGenerator/web/jobs.py)：`JobManager` 為每個 Worker 建立獨立 `TMPDIR` 與精簡環境變數、記錄 POSIX PGID 確保超時與關機終止整組子行程、異常時確實回滾記憶體佇列，並由父行程於任務成功、失敗、逾時、取消或重啟後統一清理 `inputs/`、`tmp/` 與中間資料夾。
+- **修復核心字型引擎 `font.py`、`static_family.py` 與 `vf_family.py` 邊界缺陷**：
+  - [font.py](src/OpenCCFontGenerator/font.py)：`ensure_gsub_feature_targets()` 納入 `requiredFeature` 避免與 `features` 重複 tag；`apply_force_vertical()` 相容 `otfcc` 帶索引 Feature list；`clone_fallback_glyph()` 移除錯誤提早返回，確保同名碰撞 glyph 正確改名；`apply_variants()` 新增 `ISOLATED_VARIANT_GROUPS` 隔離一簡對多繁易混異體（`後/后`、`面/麵`、`臺/檯/颱`、`餘/余`、`發/髮`）；`.ttc` 未指定索引預設改為 `0`。
+  - [static_family.py](src/OpenCCFontGenerator/static_family.py)：字重比對依別名長度由長至短優先匹配（避免 `ExtraBold` 誤配 `Bold`），嚴格檢查 `fallback_prefix` 查無檔案即報錯，並改以輸出檔 stem 去重防止 `.ttf` + `.otf` 開啟 WOFF2 時互蓋。
+  - [vf_family.py](src/OpenCCFontGenerator/vf_family.py)：驗證 `wght` 軸範圍（明確指定超界字重即報錯）、僅於存在 `STAT` 表時更新字型名稱、自動將 `CFF2` 實例降級為 `CFF1` 以相容 `otfcc`，並對中文 stem 採 UTF-8 位元組安全裁切。
+- **強化 Web API 上傳准入、ZIP 預檢、反代 IP 正規化與下載租約**：
+  - [app.py](src/OpenCCFontGenerator/web/app.py) 與 [__main__.py](src/OpenCCFontGenerator/web/__main__.py)：`UploadGuardMiddleware` 於讀取 multipart 前即檢查全域同時上傳上限（`OPENCC_WEB_MAX_CONCURRENT_UPLOADS`）、佇列滿載（`503`）與磁碟剩餘空間門檻（`OPENCC_WEB_MIN_FREE_MB` -> `507`），並於 `submit_job()` 原子交接釋放上傳名額避免雙重計算；停用 Uvicorn `proxy_headers` 改由應用層單一權威解析並正規化 IPv4/IPv6（無效轉發標頭回退 peer IP）；`SlidingWindowRateLimiter` 限制鍵數上限並節流過期掃描。
+  - [jobs.py](src/OpenCCFontGenerator/web/jobs.py)：開 `ZipFile` 前先掃描 EOCD / ZIP64 中央目錄限制條目數（含資料夾）與目錄大小，拒絕加密或非 Deflate/Store 壓縮格式並統一回傳 `400`；檔名改以 UTF-8 位元組上限（`180 bytes`）裁切；`job_id` 升級為 32 位 hex；新增下載租約避免 TTL/DELETE 與串流下載互搶，所有任務與下載回應皆附帶 `Cache-Control: private, no-store`；`/healthz` 擴充檢查全部 5 組詞表與異體字庫。
+- **修復 CSS 模板跳脫、cURL 預覽與 Web 前端輪詢／重繪／無障礙細節**：
+  - [webfont.py](src/OpenCCFontGenerator/webfont.py) 跳脫包含 `\f` 在內的控制字元並對 `url(...)` 進行百分號編碼；[jobs.py](src/OpenCCFontGenerator/web/jobs.py) 對 `download_url` 檔名進行 `urllib.parse.quote` 百分號編碼。
+  - [app.js](src/OpenCCFontGenerator/web/static/app.js) 與 [index.html](src/OpenCCFontGenerator/web/static/index.html)：以 `AbortController` + 序號鎖定單一在途輪詢避免舊回應倒序覆寫；進行中卡片改為原地更新耗時、進度與日誌（不再因時間跳動重建 DOM 遺失焦點）；`DELETE` 僅於伺服器確認成功或 `404` 時才移除本機紀錄；cURL 預覽改用 `--form-string` 與引用檔案路徑；補齊行動端抽屜背景 `inert` 鎖定與焦點切換，並標註見本條屬詞表預覽。
 
 ### Changed
 
-- **Docker 映像瘦身與生產部署參數化**：
-  - [Dockerfile](Dockerfile) 在 `python setup.py build` 後清理 `/app/build` 中間檔案。
-  - [docker-compose.yml](docker-compose.yml) 將預設並發 Worker 調整為 `1`（配合 `mem_limit: 4g` 避免大型 CJK 字型同時編譯發生 OOM），並支援透過環境變數設定綁定埠位、並發數、可信反代與 CORS 來源。
-- **補充單元與 Web API 測試**：更新 [tests/test_font_io.py](tests/test_font_io.py) 與 [tests/test_web_api.py](tests/test_web_api.py) 驗證上述修復項目。
+- **改用多階段原始碼編譯 `otfcc` 與唯讀安全強化**：
+  - [Dockerfile](Dockerfile) 移除已失效的 `otfcc-linux.x64-0.10.4.zip` 404 下載，改為驗證 SHA-256 後從 `caryll/otfcc v0.10.4` 原始碼編譯 `otfccdump` / `otfccbuild`（原生支援 `linux/amd64` 與 `linux/arm64`），建置後清理 `/app/build`，並將 `/app` 與執行檔設為 `root` 唯讀權限，僅開放 `/data/jobs` 與 `/data/tmp` 給 `appuser`。
+  - [docker-compose.yml](docker-compose.yml) 預設僅綁定 `127.0.0.1:8000:8000`、預設單一並發 Worker（`OPENCC_WEB_MAX_CONCURRENT_JOBS=1`）配合 `4g` 記憶體避免 OOM，啟用 `read_only: true`、`cap_drop: [ALL]`、`tmpfs: /tmp` 與環境變數參數化，並同步更新 [README.md](README.md) 與 [PRODUCT.md](PRODUCT.md)。
+- **補充單元與 Web API 測試**：更新 [tests/test_font_io.py](tests/test_font_io.py) 與 [tests/test_web_api.py](tests/test_web_api.py)，涵蓋上述全部核心引擎、ZIP/上傳准入、下載租約、反代正規化與 `variable-family` 端到端實測（全部 38 項測試通過）。
 
 ---
 

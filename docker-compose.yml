@@ -3,19 +3,22 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    platform: linux/amd64
     container_name: opencc-font-generator-web
     ports:
-      # Tip: Set OPENCC_WEB_BIND_PORT=127.0.0.1:8000:8000 when running behind Nginx / Caddy / Cloudflare Tunnel
-      - "${OPENCC_WEB_BIND_PORT:-8000:8000}"
+      # Bound to loopback by default for reverse-proxy deployments (Nginx / Caddy / Cloudflare Tunnel).
+      # Set OPENCC_WEB_BIND_PORT=8000:8000 if exposing directly without a local proxy.
+      - "${OPENCC_WEB_BIND_PORT:-127.0.0.1:8000:8000}"
     environment:
+      TMPDIR: /data/tmp
       OPENCC_WEB_STORAGE_DIR: /data/jobs
       OPENCC_WEB_MAX_FILE_MB: "80"
       OPENCC_WEB_MAX_TOTAL_UPLOAD_MB: "240"
       OPENCC_WEB_MAX_EXTRACTED_MB: "320"
       # 1 worker is recommended with mem_limit: 4g (large CJK + fallback jobs can peak at 2.5-3.5 GB); raise mem_limit to 6g-8g for 2
       OPENCC_WEB_MAX_CONCURRENT_JOBS: "${OPENCC_WEB_MAX_CONCURRENT_JOBS:-1}"
+      OPENCC_WEB_MAX_CONCURRENT_UPLOADS: "${OPENCC_WEB_MAX_CONCURRENT_UPLOADS:-4}"
       OPENCC_WEB_MAX_QUEUED_JOBS: "20"
+      OPENCC_WEB_MIN_FREE_MB: "${OPENCC_WEB_MIN_FREE_MB:-512}"
       OPENCC_WEB_JOB_TTL_SECONDS: "7200"
       OPENCC_WEB_JOB_TIMEOUT_SECONDS: "600"
       OPENCC_WEB_RATE_LIMIT_PER_MIN: "12"
@@ -25,7 +28,12 @@ services:
       # Restrict to your production origin(s) (e.g. https://fonts.example.com) before public exposure
       OPENCC_WEB_CORS_ORIGINS: "${OPENCC_WEB_CORS_ORIGINS:-*}"
     volumes:
-      - opencc_font_jobs:/data/jobs
+      - opencc_font_jobs:/data
+    tmpfs:
+      - /tmp:size=256m,noexec,nosuid
+    read_only: true
+    cap_drop:
+      - ALL
     mem_limit: 4g
     cpus: "2.0"
     pids_limit: 128

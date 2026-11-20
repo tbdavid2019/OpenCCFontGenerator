@@ -479,7 +479,7 @@ python -m OpenCCFontGenerator \
 
 ### 使用 Docker Compose 一鍵部署（推薦）
 
-> ⚠️ 由於上游 `otfcc` (`v0.10.4`) 官方預編譯檔僅提供 Linux `x86_64`，[Dockerfile](Dockerfile) 與 [docker-compose.yml](docker-compose.yml) 已設定為 `linux/amd64` 並在建置階段預先安裝 `otfcc` 與建置 `OpenCC 1.4.2` 快取。
+> [Dockerfile](Dockerfile) 採多階段建置，會驗證 SHA-256 後從 `caryll/otfcc` (`v0.10.4`) 原始碼編譯 `otfccdump` / `otfccbuild` 並預建 `OpenCC 1.4.2` 快取，支援 `linux/amd64` 與 `linux/arm64` 原生建置。[docker-compose.yml](docker-compose.yml) 預設僅綁定本機回環埠 `127.0.0.1:8000:8000`（若需直接對外開放可設 `OPENCC_WEB_BIND_PORT=8000:8000`）。
 
 ```bash
 docker compose up -d --build
@@ -491,11 +491,14 @@ docker compose up -d --build
 - 健康檢查：`http://localhost:8000/healthz`
 
 可透過環境變數自訂伺服器資源限制（詳見 [docker-compose.yml](docker-compose.yml)）：
+- `OPENCC_WEB_BIND_PORT`（預設 `127.0.0.1:8000:8000`）
 - `OPENCC_WEB_MAX_FILE_MB`（預設 `80`）
 - `OPENCC_WEB_MAX_TOTAL_UPLOAD_MB`（預設 `240`）
 - `OPENCC_WEB_MAX_EXTRACTED_MB`（預設 `320`，單次請求所有 ZIP 合計解壓上限）
-- `OPENCC_WEB_MAX_CONCURRENT_JOBS`（預設 `2`）
+- `OPENCC_WEB_MAX_CONCURRENT_JOBS`（預設 `1`，配合 4 GB 記憶體限制降低大型 CJK 編譯 OOM 風險）
+- `OPENCC_WEB_MAX_CONCURRENT_UPLOADS`（預設 `4`）
 - `OPENCC_WEB_MAX_QUEUED_JOBS`（預設 `20`）
+- `OPENCC_WEB_MIN_FREE_MB`（預設 `512`）
 - `OPENCC_WEB_RATE_LIMIT_PER_MIN`（預設 `12`，設為 `0` 可停用限流）
 - `OPENCC_WEB_TRUST_PROXY_HEADERS`（預設 `false`；若位於 Nginx / Caddy 後方，建議設為 `true` 並於 `OPENCC_WEB_TRUSTED_PROXIES` 填入反代 IP/CIDR 白名單）
 - `OPENCC_WEB_JOB_TTL_SECONDS`（預設 `7200`，即完成後保留 2 小時自動刪除任務檔）

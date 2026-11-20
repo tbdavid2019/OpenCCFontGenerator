@@ -78,7 +78,10 @@ const state = {
   jobs: [],
   logOpenState: new Map(),
   jobRenderSig: new Map(),
+  jobCardStructSig: new Map(),
   pollTimer: null,
+  pollSeq: 0,
+  pollAbort: null,
   pollBackoffMs: 1500,
   previewTimer: null,
   previewSeq: 0,
@@ -89,6 +92,11 @@ const state = {
 
 function quoteShellArg(value) {
   return `'${String(value).replace(/'/g, `'\\''`)}'`;
+}
+
+function quoteCurlFileArg(fieldName, filePath) {
+  const escaped = String(filePath).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+  return quoteShellArg(`${fieldName}=@"${escaped}"`);
 }
 
 function loadStoredJobIds() {
@@ -206,9 +214,13 @@ function setupDropzones() {
 
 function syncDrawerInert() {
   const rail = document.getElementById('nav-rail');
+  const mainCol = document.querySelector('.main-column');
   const isMobile = window.matchMedia('(max-width: 900px)').matches;
   const isOpen = rail.classList.contains('is-open');
   rail.inert = isMobile && !isOpen;
+  if (mainCol) {
+    mainCol.inert = isMobile && isOpen;
+  }
 }
 
 function switchMode(mode) {
@@ -243,10 +255,15 @@ function switchMode(mode) {
 }
 
 function openMobileDrawer() {
-  document.getElementById('nav-rail').classList.add('is-open');
+  const rail = document.getElementById('nav-rail');
+  rail.classList.add('is-open');
   document.getElementById('nav-backdrop').hidden = false;
   document.getElementById('mobile-nav-btn').setAttribute('aria-expanded', 'true');
   syncDrawerInert();
+  const focusTarget = rail.querySelector('.mode-btn.is-active') || rail.querySelector('.mode-btn');
+  if (focusTarget) {
+    focusTarget.focus();
+  }
 }
 
 function closeMobileDrawer(restoreFocus = false) {
@@ -353,7 +370,7 @@ async function refreshSpecimen() {
       customOut.textContent = '';
     }
 
-    metaEl.textContent = `CONFIG: ${config} · NO_PUNC: ${noPunc ? 'TRUE' : 'FALSE'}`;
+    metaEl.textContent = `CONFIG: ${config} · NO_PUNC: ${noPunc ? 'TRUE' : 'FALSE'} · 詞表預覽`;
   } catch (err) {
     if (err?.name !== 'AbortError') {
       // Ignore transient preview errors while keeping UI responsive
@@ -473,34 +490,34 @@ function updateCurlPreview() {
   const parts = [`curl -X POST ${quoteShellArg(`${origin}${endpoint}`)}`];
 
   if (mode === 'convert') {
-    parts.push('  -F \'source_font=@/path/to/SourceFont.ttf\'');
+    parts.push('  -F \'source_font=@"/path/to/SourceFont.ttf"\'');
     const fb = getDropKeyFiles('convert-fallback', form.querySelector('#convert-fallback-input'));
-    if (fb.length) parts.push(`  -F ${quoteShellArg(`fallback_font=@/path/to/${fb[0].name}`)}`);
+    if (fb.length) parts.push(`  -F ${quoteCurlFileArg('fallback_font', `/path/to/${fb[0].name}`)}`);
     const jsonInput = form.querySelector('#convert-name-json');
     if (jsonInput?.files?.length) {
-      parts.push(`  -F ${quoteShellArg(`name_header_file=@/path/to/${jsonInput.files[0].name}`)}`);
+      parts.push(`  -F ${quoteCurlFileArg('name_header_file', `/path/to/${jsonInput.files[0].name}`)}`);
     }
   } else if (mode === 'rotate90') {
-    parts.push('  -F \'source_font=@/path/to/SourceFont.ttf\'');
+    parts.push('  -F \'source_font=@"/path/to/SourceFont.ttf"\'');
   } else if (mode === 'webfont') {
-    parts.push('  -F \'source_font=@/path/to/SourceFont.ttf\'');
+    parts.push('  -F \'source_font=@"/path/to/SourceFont.ttf"\'');
   } else if (mode === 'static-family') {
-    parts.push('  -F \'source_files=@/path/to/fonts_static.zip\'');
+    parts.push('  -F \'source_files=@"/path/to/fonts_static.zip"\'');
     const fb = getDropKeyFiles('static-fallbacks', form.querySelector('#static-fallbacks-input'));
-    if (fb.length) parts.push('  -F \'fallback_files=@/path/to/fallback_fonts.zip\'');
+    if (fb.length) parts.push('  -F \'fallback_files=@"/path/to/fallback_fonts.zip"\'');
   } else if (mode === 'variable-family') {
-    parts.push('  -F \'source_font=@/path/to/VariableFont.ttf\'');
-    parts.push('  -F \'fallback_files=@/path/to/NotoSansTC.zip\'');
+    parts.push('  -F \'source_font=@"/path/to/VariableFont.ttf"\'');
+    parts.push('  -F \'fallback_files=@"/path/to/NotoSansTC.zip"\'');
     const weights = Array.from(form.querySelectorAll('#vf-weights-grid input:checked')).map((el) => el.value);
-    if (weights.length) parts.push(`  -F ${quoteShellArg(`weights=${weights.join(',')}`)}`);
+    if (weights.length) parts.push(`  --form-string ${quoteShellArg(`weights=${weights.join(',')}`)}`);
   }
 
   form.querySelectorAll('input, select').forEach((el) => {
     if (!el.name || el.type === 'file' || el.type === 'hidden') return;
     if (el.type === 'checkbox') {
-      if (el.checked) parts.push(`  -F ${quoteShellArg(`${el.name}=true`)}`);
+      if (el.checked) parts.push(`  --form-string ${quoteShellArg(`${el.name}=true`)}`);
     } else if (el.value !== '') {
-      parts.push(`  -F ${quoteShellArg(`${el.name}=${el.value}`)}`);
+      parts.push(`  --form-string ${quoteShellArg(`${el.name}=${el.value}`)}`);
     }
   });
 
@@ -603,18 +620,31 @@ function upsertJobRecord(job) {
 
 async function fetchStoredJobs() {
   if (!state.jobIds.length) {
+    if (state.pollAbort) {
+      state.pollAbort.abort();
+      state.pollAbort = null;
+    }
     state.jobs = [];
     state.pollBackoffMs = 1500;
     renderJobs();
     return;
   }
 
+  if (state.pollAbort) {
+    state.pollAbort.abort();
+    state.pollAbort = null;
+  }
+  const controller = new AbortController();
+  state.pollAbort = controller;
+  const reqSeq = ++state.pollSeq;
+
   const shouldKeepPolling = state.jobs.some((j) => j.status === 'queued' || j.status === 'running') || !state.jobs.length;
   const queriedIds = [...state.jobIds];
   const queriedSet = new Set(queriedIds);
   try {
     const qs = new URLSearchParams({ ids: queriedIds.join(',') });
-    const resp = await fetch(`/api/v1/jobs?${qs.toString()}`);
+    const resp = await fetch(`/api/v1/jobs?${qs.toString()}`, { signal: controller.signal });
+    if (reqSeq !== state.pollSeq) return;
     if (!resp.ok) {
       state.pollBackoffMs = Math.min(10000, state.pollBackoffMs * 2);
       if (shouldKeepPolling || state.jobs.some((j) => j.status === 'queued' || j.status === 'running')) {
@@ -623,6 +653,7 @@ async function fetchStoredJobs() {
       return;
     }
     const data = await resp.json();
+    if (reqSeq !== state.pollSeq) return;
     state.pollBackoffMs = 1500;
     const byId = new Map(data.map((j) => [j.job_id, j]));
     const existingById = new Map(state.jobs.map((j) => [j.job_id, j]));
@@ -637,10 +668,15 @@ async function fetchStoredJobs() {
     if (state.jobs.some((j) => j.status === 'queued' || j.status === 'running')) {
       schedulePolling(state.pollBackoffMs);
     }
-  } catch {
+  } catch (err) {
+    if (err?.name === 'AbortError' || reqSeq !== state.pollSeq) return;
     state.pollBackoffMs = Math.min(10000, state.pollBackoffMs * 2);
     if (shouldKeepPolling || state.jobs.some((j) => j.status === 'queued' || j.status === 'running')) {
       schedulePolling(state.pollBackoffMs);
+    }
+  } finally {
+    if (state.pollAbort === controller) {
+      state.pollAbort = null;
     }
   }
 }
@@ -659,6 +695,22 @@ function describeJobTitle(job) {
   if (s.source_filename) return `${s.source_filename}`;
   if (s.source_count) return `靜態家族批次（${s.source_count} 個來源字型）`;
   return `任務 (${job.mode})`;
+}
+
+function getCardStructureSig(job) {
+  return JSON.stringify({
+    status: job.status,
+    error: job.error || '',
+    hasLog: Boolean(job.log_tail && job.log_tail.length > 0),
+    downloadUrl: job.download_url || '',
+    artifacts: (job.artifacts || []).map((a) => `${a.filename}:${a.size_bytes}:${a.primary}`),
+  });
+}
+
+function formatStatusLabel(job) {
+  return job.status === 'queued' && job.queue_position > 0
+    ? `排隊 #${job.queue_position}`
+    : (STATUS_LABELS[job.status] || job.status);
 }
 
 function buildJobCard(job) {
@@ -680,9 +732,7 @@ function buildJobCard(job) {
 
   const statusBadge = document.createElement('span');
   statusBadge.className = `job-status is-${job.status}`;
-  statusBadge.textContent = job.status === 'queued' && job.queue_position > 0
-    ? `排隊 #${job.queue_position}`
-    : (STATUS_LABELS[job.status] || job.status);
+  statusBadge.textContent = formatStatusLabel(job);
 
   head.append(titleWrap, statusBadge);
 
@@ -698,8 +748,10 @@ function buildJobCard(job) {
   const metaRow = document.createElement('div');
   metaRow.className = 'job-meta-row';
   const phaseSpan = document.createElement('span');
+  phaseSpan.className = 'job-phase';
   phaseSpan.textContent = PHASE_LABELS[job.phase] || job.phase;
   const elapsedSpan = document.createElement('span');
+  elapsedSpan.className = 'job-elapsed';
   elapsedSpan.textContent = job.elapsed_seconds !== null ? `${job.elapsed_seconds.toFixed(1)}s` : '等待中';
   metaRow.append(phaseSpan, elapsedSpan);
 
@@ -720,6 +772,7 @@ function buildJobCard(job) {
       ? state.logOpenState.get(job.job_id)
       : defaultOpen;
     const summary = document.createElement('summary');
+    summary.className = 'job-log-summary';
     summary.textContent = `Worker 編譯日誌 (${job.log_tail.length} 行)`;
     summary.addEventListener('click', () => {
       state.logOpenState.set(job.job_id, !details.open);
@@ -763,6 +816,48 @@ function buildJobCard(job) {
   return card;
 }
 
+function updateJobCardInPlace(card, job) {
+  const statusBadge = card.querySelector('.job-status');
+  if (statusBadge) {
+    statusBadge.className = `job-status is-${job.status}`;
+    statusBadge.textContent = formatStatusLabel(job);
+  }
+
+  const line = card.querySelector('.job-line');
+  const lineFill = card.querySelector('.job-line-fill');
+  if (line && lineFill) {
+    line.className = `job-line is-${job.status}`;
+    lineFill.style.width = job.status === 'running' ? `${PHASE_PROGRESS[job.phase] || 55}%` : '';
+  }
+
+  const phaseSpan = card.querySelector('.job-phase');
+  if (phaseSpan) {
+    phaseSpan.textContent = PHASE_LABELS[job.phase] || job.phase;
+  }
+
+  const elapsedSpan = card.querySelector('.job-elapsed');
+  if (elapsedSpan) {
+    elapsedSpan.textContent = job.elapsed_seconds !== null ? `${job.elapsed_seconds.toFixed(1)}s` : '等待中';
+  }
+
+  if (job.log_tail && job.log_tail.length > 0) {
+    const summary = card.querySelector('.job-log-summary');
+    const pre = card.querySelector('.job-log');
+    if (summary) {
+      summary.textContent = `Worker 編譯日誌 (${job.log_tail.length} 行)`;
+    }
+    if (pre) {
+      const nextLog = job.log_tail.join('\n');
+      if (pre.textContent !== nextLog) {
+        const wasAtBottom = pre.scrollTop + pre.clientHeight >= pre.scrollHeight - 8;
+        const prevScrollTop = pre.scrollTop;
+        pre.textContent = nextLog;
+        pre.scrollTop = wasAtBottom ? pre.scrollHeight : prevScrollTop;
+      }
+    }
+  }
+}
+
 function renderJobs() {
   const listEl = document.getElementById('job-list');
   const emptyEl = document.getElementById('queue-empty');
@@ -771,6 +866,7 @@ function renderJobs() {
   if (state.jobs.length === 0) {
     listEl.innerHTML = '';
     state.jobRenderSig.clear();
+    state.jobCardStructSig.clear();
     state.logOpenState.clear();
     return;
   }
@@ -788,18 +884,31 @@ function renderJobs() {
   for (const id of state.jobRenderSig.keys()) {
     if (!activeIdSet.has(id)) {
       state.jobRenderSig.delete(id);
+      state.jobCardStructSig.delete(id);
       state.logOpenState.delete(id);
     }
   }
 
   state.jobs.forEach((job, index) => {
     const sig = JSON.stringify(job);
+    const structSig = getCardStructureSig(job);
     const prevCard = existingCards.get(job.job_id);
+
     if (prevCard && state.jobRenderSig.get(job.job_id) === sig) {
       const currentAtIndex = listEl.children[index];
       if (currentAtIndex !== prevCard) {
         listEl.insertBefore(prevCard, currentAtIndex || null);
       }
+      return;
+    }
+
+    if (prevCard && state.jobCardStructSig.get(job.job_id) === structSig) {
+      updateJobCardInPlace(prevCard, job);
+      const currentAtIndex = listEl.children[index];
+      if (currentAtIndex !== prevCard) {
+        listEl.insertBefore(prevCard, currentAtIndex || null);
+      }
+      state.jobRenderSig.set(job.job_id, sig);
       return;
     }
 
@@ -823,6 +932,7 @@ function renderJobs() {
     }
 
     state.jobRenderSig.set(job.job_id, sig);
+    state.jobCardStructSig.set(job.job_id, structSig);
 
     const newPre = newCard.querySelector('.job-log');
     if (newPre) {
@@ -837,14 +947,20 @@ function renderJobs() {
 
 async function removeJob(jobId) {
   try {
-    await fetch(`/api/v1/jobs/${jobId}`, { method: 'DELETE' });
+    const resp = await fetch(`/api/v1/jobs/${jobId}`, { method: 'DELETE' });
+    if (!(resp.ok || resp.status === 404)) {
+      showFeedback(`無法中止或刪除任務 ${jobId}（HTTP ${resp.status}），請稍後再試。`);
+      return;
+    }
   } catch {
-    // Remove locally even if already expired
+    showFeedback(`網路連線異常，未能確認伺服器是否已中止任務 ${jobId}，請稍後再試。`);
+    return;
   }
   state.jobIds = state.jobIds.filter((id) => id !== jobId);
   state.jobs = state.jobs.filter((j) => j.job_id !== jobId);
   state.logOpenState.delete(jobId);
   state.jobRenderSig.delete(jobId);
+  state.jobCardStructSig.delete(jobId);
   saveStoredJobIds();
   renderJobs();
   refreshStatusBanner();
@@ -950,6 +1066,9 @@ function init() {
     }
     for (const id of state.jobRenderSig.keys()) {
       if (!keepIds.has(id)) state.jobRenderSig.delete(id);
+    }
+    for (const id of state.jobCardStructSig.keys()) {
+      if (!keepIds.has(id)) state.jobCardStructSig.delete(id);
     }
     state.jobIds = activeOnly.map((j) => j.job_id);
     state.jobs = activeOnly;
