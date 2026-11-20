@@ -13,7 +13,7 @@ All notable changes to OpenCC Font Generator will be documented here.
   - 於 `main` 分支每次 `push` / `pull_request` 自動執行 Shell/JS/YAML/Python 語法檢查、編譯快取 `otfcc v0.10.4`、OpenCC 1.4.2 詞庫不變量驗證與完整 38 項單元／Web API 測試。
   - `main` 測試全數通過後，自動建置並推送 `linux/amd64` + `linux/arm64` 雙架構映像至 `ghcr.io/tbdavid2019/openccfontgenerator:latest` 與 `sha-<commit>` 標籤。
 - **整合 GHCR 映像與 Scoped Watchtower 自動更新**：
-  - 更新 [docker-compose.yml](docker-compose.yml) 加入 `image`、`com.centurylinklabs.watchtower.scope=opencc-font` 標籤與 `profiles: ["watchtower"]` 的 `nickfedor/watchtower:latest` 服務，免除遠端低記憶體主機本機編譯負擔並支援 push 後自動滾動更新；同步補充 [README.md](README.md) 部署說明。
+  - 更新 [docker-compose.yml](docker-compose.yml) 加入 `image`、`com.centurylinklabs.watchtower.scope=opencc-font` 標籤與 `profiles: ["watchtower"]` 的 `nickfedor/watchtower:latest` 服務（`nicholas-fedor/watchtower`，預設每 1 小時 / `3600s` 檢查一次更新），免除遠端低記憶體主機本機編譯負擔並支援自動滾動更新；同步補充 [README.md](README.md) 部署說明。
 
 #### 888 字體檔加工台品牌命名與完整 SEO / Open Graph / PWA 圖示支援
 - **補齊 `https://font.david888.com` 搜尋引擎與社群分享中繼資料（Meta / OG / Twitter / JSON-LD）**：
