@@ -1,9 +1,13 @@
 services:
   opencc-font-web:
+    image: ${OPENCC_WEB_IMAGE:-ghcr.io/tbdavid2019/openccfontgenerator:latest}
     build:
       context: .
       dockerfile: Dockerfile
     container_name: opencc-font-generator-web
+    labels:
+      - "com.centurylinklabs.watchtower.enable=true"
+      - "com.centurylinklabs.watchtower.scope=opencc-font"
     ports:
       # Bound to loopback by default for reverse-proxy deployments (Nginx / Caddy / Cloudflare Tunnel).
       # Set OPENCC_WEB_BIND_PORT=8000:8000 if exposing directly without a local proxy.
@@ -43,6 +47,25 @@ services:
     # Note: Keep Uvicorn single-process (workers=1) because JobManager and SlidingWindowRateLimiter hold state in memory.
     # If placing behind Nginx / Caddy / Cloudflare, set client_max_body_size >= 250M
     # and proxy_read_timeout >= 300s (job submission returns 202 immediately, while big uploads may take ~30s).
+
+  watchtower:
+    image: nickfedor/watchtower:latest
+    container_name: opencc-font-watchtower
+    profiles: ["watchtower"]
+    restart: unless-stopped
+    labels:
+      - "com.centurylinklabs.watchtower.enable=false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${DOCKER_CONFIG_JSON:-/dev/null}:/config.json:ro
+    environment:
+      WATCHTOWER_CLEANUP: "true"
+      WATCHTOWER_LABEL_ENABLE: "true"
+      WATCHTOWER_SCOPE: opencc-font
+      WATCHTOWER_POLL_INTERVAL: "${WATCHTOWER_POLL_INTERVAL:-120}"
+      WATCHTOWER_TIMEOUT: "60s"
+      WATCHTOWER_INCLUDE_RESTARTING: "true"
+      TZ: Asia/Taipei
 
 volumes:
   opencc_font_jobs:

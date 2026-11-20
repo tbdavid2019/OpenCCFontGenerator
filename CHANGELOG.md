@@ -8,6 +8,13 @@ All notable changes to OpenCC Font Generator will be documented here.
 
 ### Added
 
+#### 新增 GitHub Actions CI/CD 與 GHCR + Watchtower 自動部署管線
+- **新增自動化測試與多架構映像發布管線（[.github/workflows/ci-cd.yml](.github/workflows/ci-cd.yml)）**：
+  - 於 `main` 分支每次 `push` / `pull_request` 自動執行 Shell/JS/YAML/Python 語法檢查、編譯快取 `otfcc v0.10.4`、OpenCC 1.4.2 詞庫不變量驗證與完整 38 項單元／Web API 測試。
+  - `main` 測試全數通過後，自動建置並推送 `linux/amd64` + `linux/arm64` 雙架構映像至 `ghcr.io/tbdavid2019/openccfontgenerator:latest` 與 `sha-<commit>` 標籤。
+- **整合 GHCR 映像與 Scoped Watchtower 自動更新**：
+  - 更新 [docker-compose.yml](docker-compose.yml) 加入 `image`、`com.centurylinklabs.watchtower.scope=opencc-font` 標籤與 `profiles: ["watchtower"]` 的 `nickfedor/watchtower:latest` 服務，免除遠端低記憶體主機本機編譯負擔並支援 push 後自動滾動更新；同步補充 [README.md](README.md) 部署說明。
+
 #### 888 字體檔加工台品牌命名與完整 SEO / Open Graph / PWA 圖示支援
 - **補齊 `https://font.david888.com` 搜尋引擎與社群分享中繼資料（Meta / OG / Twitter / JSON-LD）**：
   - 將站台標題與品牌名稱更新為「**888 字體檔加工台**」，並於 [index.html](src/OpenCCFontGenerator/web/static/index.html) 補齊 `<meta name="description">`、`canonical`、完整 Open Graph（`og:type`、`og:site_name`、`og:locale`、`og:url`、`og:title`、`og:description`、`og:image` `1200×630`）、Twitter Card（`summary_large_image`）與 `WebApplication` Schema.org JSON-LD 結構化資料。

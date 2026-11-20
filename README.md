@@ -485,6 +485,18 @@ python -m OpenCCFontGenerator \
 docker compose up -d --build
 ```
 
+#### CI/CD 自動建置與 Watchtower 自動更新（GHCR）
+
+每次推送至 `main` 分支時，[ci-cd.yml](.github/workflows/ci-cd.yml) 會先執行完整單元測試與 OpenCC 詞庫驗證，通過後自動編譯並推送 `linux/amd64` + `linux/arm64` 多架構映像至 `ghcr.io/tbdavid2019/openccfontgenerator:latest`。部署主機可直接拉取現成映像，並可選擇啟用內建 Scoped Watchtower 自動滾動更新：
+
+```bash
+# 直接使用 GHCR 預編譯映像啟動
+docker compose pull && docker compose up -d --no-build
+
+# 或在 .env 啟用 COMPOSE_PROFILES=watchtower（視需求設定 DOCKER_CONFIG_JSON=/path/to/.docker/config.json）
+docker compose --profile watchtower up -d --no-build
+```
+
 啟動後即可訪問：
 - Web 工作台：`http://localhost:8000/`
 - API Swagger 文件：`http://localhost:8000/docs`
